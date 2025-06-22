@@ -11,6 +11,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{error, info};
+use tokio;
 
 #[derive(Clone, Copy, PartialEq)]
 enum MonitorTypeForm {
@@ -455,6 +456,7 @@ impl NetworkMonitorApp {
 
         let thread = thread::spawn(move || {
             let mut last_check_times: HashMap<i64, Instant> = HashMap::new();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
 
             loop {
                 // In a real app, you might want to get a fresh list of nodes periodically from the DB
@@ -473,7 +475,7 @@ impl NetworkMonitorApp {
 
                     if should_check {
                         last_check_times.insert(node_id, now);
-                        let result = check_node(&node);
+                        let result = runtime.block_on(check_node(&node));
 
                         match result {
                             Ok(mut check_result) => {
