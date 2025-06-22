@@ -1,0 +1,41 @@
+[package]
+name = "net-monitor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# GUI framework
+eframe = "0.27"
+egui = "0.27"
+
+# Database
+rusqlite = { version = "0.31", features = ["chrono", "bundled"] }
+
+# Network monitoring
+reqwest = { version = "0.12", features = ["blocking"] }
+tokio = { version = "1.0", features = ["full"] }
+ping = "0.5"
+snmp = "0.2.2"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# File operations
+rfd = "0.14"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
+# System directories
+dirs = "5.0"
+directories = "5.0" 

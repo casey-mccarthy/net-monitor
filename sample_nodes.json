@@ -1,0 +1,50 @@
+[
+  {
+    "name": "Google DNS",
+    "monitoring_interval": 5,
+    "detail": {
+      "type": "Ping",
+      "host": "8.8.8.8",
+      "count": 3,
+      "timeout": 5
+    }
+  },
+  {
+    "name": "Cloudflare DNS",
+    "monitoring_interval": 5,
+    "detail": {
+      "type": "Ping",
+      "host": "1.1.1.1",
+      "count": 3,
+      "timeout": 5
+    }
+  },
+  {
+    "name": "Google",
+    "monitoring_interval": 10,
+    "detail": {
+      "type": "Http",
+      "url": "https://www.google.com",
+      "expected_status": 200
+    }
+  },
+  {
+    "name": "GitHub",
+    "monitoring_interval": 15,
+    "detail": {
+      "type": "Http",
+      "url": "https://github.com",
+      "expected_status": 200
+    }
+  },
+  {
+    "name": "Example Router",
+    "monitoring_interval": 30,
+    "detail": {
+      "type": "Snmp",
+      "target": "192.168.1.1",
+      "community": "public",
+      "oid": "1.3.6.1.2.1.1.1.0"
+    }
+  }
+] 
