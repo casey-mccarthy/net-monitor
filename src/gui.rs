@@ -261,10 +261,12 @@ impl NetworkMonitorApp {
             let mut is_open = true;
             let mut close_window = false;
             let mut form = self.editing_node.as_ref().unwrap().1.clone();
-            Window::new(format!("Edit Node: {}", form.name))
+            Window::new("Edit Node")
                 .open(&mut is_open)
                 .resizable(true)
                 .show(ctx, |ui| {
+                    ui.heading(format!("Editing: {}", form.name));
+                    ui.separator();
                     self.node_form_ui(ui, &mut form);
                     if ui.button("Save").clicked() {
                         self.update_node_from_form(node_id, &form.clone());
