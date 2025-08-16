@@ -15,11 +15,6 @@ pub enum MonitorDetail {
         count: u32,
         timeout: u64,
     },
-    Snmp {
-        target: String,
-        community: String,
-        oid: String,
-    },
 }
 
 impl fmt::Display for MonitorDetail {
@@ -27,7 +22,6 @@ impl fmt::Display for MonitorDetail {
         match self {
             MonitorDetail::Http { .. } => write!(f, "HTTP"),
             MonitorDetail::Ping { .. } => write!(f, "Ping"),
-            MonitorDetail::Snmp { .. } => write!(f, "SNMP"),
         }
     }
 }
@@ -119,13 +113,6 @@ mod tests {
             timeout: 5,
         };
         assert_eq!(ping_detail.to_string(), "Ping");
-
-        let snmp_detail = MonitorDetail::Snmp {
-            target: "192.168.1.1".to_string(),
-            community: "public".to_string(),
-            oid: "1.3.6.1.2.1.1.1.0".to_string(),
-        };
-        assert_eq!(snmp_detail.to_string(), "SNMP");
     }
 
     #[test]
@@ -234,10 +221,9 @@ mod tests {
     fn test_node_import_creation() {
         let node_import = NodeImport {
             name: "Test Node".to_string(),
-            detail: MonitorDetail::Snmp {
-                target: "192.168.1.1".to_string(),
-                community: "public".to_string(),
-                oid: "1.3.6.1.2.1.1.1.0".to_string(),
+            detail: MonitorDetail::Http {
+                url: "https://example.com".to_string(),
+                expected_status: 200,
             },
             monitoring_interval: 60,
         };

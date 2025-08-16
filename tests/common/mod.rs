@@ -6,7 +6,6 @@ use tempfile::NamedTempFile;
 pub struct TestConfig {
     pub http_timeout: u64,
     pub ping_timeout: u64,
-    pub snmp_timeout: u64,
 }
 
 impl Default for TestConfig {
@@ -14,7 +13,6 @@ impl Default for TestConfig {
         Self {
             http_timeout: 10,
             ping_timeout: 5,
-            snmp_timeout: 5,
         }
     }
 }
@@ -70,28 +68,6 @@ pub fn create_test_ping_node(
     }
 }
 
-/// Creates a test SNMP node with configurable parameters
-pub fn create_test_snmp_node(
-    name: &str,
-    target: &str,
-    community: &str,
-    oid: &str,
-    interval: u64,
-) -> Node {
-    Node {
-        id: None,
-        name: name.to_string(),
-        detail: MonitorDetail::Snmp {
-            target: target.to_string(),
-            community: community.to_string(),
-            oid: oid.to_string(),
-        },
-        status: NodeStatus::Unknown,
-        last_check: None,
-        response_time: None,
-        monitoring_interval: interval,
-    }
-}
 
 /// Creates a standard test HTTP node for common testing
 pub fn create_standard_test_http_node() -> Node {
@@ -111,17 +87,6 @@ pub fn create_standard_test_ping_node() -> Node {
         1,
         1,
         30,
-    )
-}
-
-/// Creates a standard test SNMP node for common testing
-pub fn create_standard_test_snmp_node() -> Node {
-    create_test_snmp_node(
-        "Standard Test SNMP Node",
-        "127.0.0.1",
-        "public",
-        "1.3.6.1.2.1.1.1.0",
-        120,
     )
 }
 
@@ -162,21 +127,6 @@ pub fn assert_ping_node_properties(
     }
 }
 
-/// Asserts that a node has the expected SNMP properties
-pub fn assert_snmp_node_properties(
-    node: &Node,
-    expected_target: &str,
-    expected_community: &str,
-    expected_oid: &str,
-) {
-    if let MonitorDetail::Snmp { target, community, oid } = &node.detail {
-        assert_eq!(target, expected_target);
-        assert_eq!(community, expected_community);
-        assert_eq!(oid, expected_oid);
-    } else {
-        panic!("Expected SNMP monitor detail");
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -196,12 +146,6 @@ mod tests {
         assert_ping_node_properties(&node, "127.0.0.1", 4, 5);
     }
 
-    #[test]
-    fn test_create_test_snmp_node() {
-        let node = create_test_snmp_node("Test", "127.0.0.1", "public", "1.3.6.1.2.1.1.1.0", 120);
-        assert_node_basic_properties(&node, "Test", 120);
-        assert_snmp_node_properties(&node, "127.0.0.1", "public", "1.3.6.1.2.1.1.1.0");
-    }
 
     #[test]
     fn test_create_standard_test_nodes() {
@@ -212,9 +156,5 @@ mod tests {
         let ping_node = create_standard_test_ping_node();
         assert_node_basic_properties(&ping_node, "Standard Test Ping Node", 30);
         assert_ping_node_properties(&ping_node, "127.0.0.1", 1, 1);
-
-        let snmp_node = create_standard_test_snmp_node();
-        assert_node_basic_properties(&snmp_node, "Standard Test SNMP Node", 120);
-        assert_snmp_node_properties(&snmp_node, "127.0.0.1", "public", "1.3.6.1.2.1.1.1.0");
     }
 } 

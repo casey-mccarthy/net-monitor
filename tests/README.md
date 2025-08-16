@@ -74,7 +74,6 @@ The test suite supports different configurations based on environment variables:
 - `NET_MONITOR_SKIP_INTEGRATION_TESTS` - Set to `1` or `true` to skip integration tests
 - `NET_MONITOR_HTTP_TIMEOUT` - HTTP test timeout in seconds
 - `NET_MONITOR_PING_TIMEOUT` - Ping test timeout in seconds
-- `NET_MONITOR_SNMP_TIMEOUT` - SNMP test timeout in seconds
 - `NET_MONITOR_MAX_CONCURRENT_TESTS` - Maximum concurrent tests
 
 #### Test Environments
@@ -118,7 +117,6 @@ cargo test
 ### Monitor Module Tests
 - HTTP monitoring (success and failure cases)
 - Ping monitoring (localhost and invalid hosts)
-- SNMP monitoring (valid and invalid OIDs)
 - Response time measurement
 - Error handling and propagation
 - Async/await functionality
@@ -148,11 +146,9 @@ Located in `tests/common/mod.rs`:
 - `create_test_database()` - Creates temporary test database
 - `create_test_http_node()` - Creates HTTP test node
 - `create_test_ping_node()` - Creates ping test node
-- `create_test_snmp_node()` - Creates SNMP test node
 - `assert_node_basic_properties()` - Validates node properties
 - `assert_http_node_properties()` - Validates HTTP node details
 - `assert_ping_node_properties()` - Validates ping node details
-- `assert_snmp_node_properties()` - Validates SNMP node details
 
 ### Test Configuration
 Located in `tests/test_config.rs`:
@@ -172,10 +168,6 @@ Located in `tests/test_config.rs`:
 ### Ping Test Hosts
 - `127.0.0.1` - Localhost (should always be reachable)
 - `8.8.8.8` - Google DNS (usually reachable)
-
-### SNMP Test Targets
-- `127.0.0.1` - Localhost (requires SNMP service)
-- Standard OIDs for testing
 
 ## Best Practices
 

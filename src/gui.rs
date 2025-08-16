@@ -17,7 +17,6 @@ use tokio;
 enum MonitorTypeForm {
     Http,
     Ping,
-    Snmp,
 }
 
 impl fmt::Display for MonitorTypeForm {
@@ -25,7 +24,6 @@ impl fmt::Display for MonitorTypeForm {
         match self {
             MonitorTypeForm::Http => write!(f, "HTTP"),
             MonitorTypeForm::Ping => write!(f, "Ping"),
-            MonitorTypeForm::Snmp => write!(f, "SNMP"),
         }
     }
 }
@@ -43,10 +41,6 @@ struct NodeForm {
     ping_host: String,
     ping_count: String,
     ping_timeout: String,
-    // SNMP
-    snmp_target: String,
-    snmp_community: String,
-    snmp_oid: String,
 }
 
 impl Default for NodeForm {
@@ -60,9 +54,6 @@ impl Default for NodeForm {
             ping_host: String::new(),
             ping_count: "4".to_string(),
             ping_timeout: "5".to_string(),
-            snmp_target: String::new(),
-            snmp_community: "public".to_string(),
-            snmp_oid: "1.3.6.1.2.1.1.1.0".to_string(),
         }
     }
 }
@@ -78,11 +69,6 @@ impl NodeForm {
                 host: self.ping_host.clone(),
                 count: self.ping_count.parse()?,
                 timeout: self.ping_timeout.parse()?,
-            }),
-            MonitorTypeForm::Snmp => Ok(MonitorDetail::Snmp {
-                target: self.snmp_target.clone(),
-                community: self.snmp_community.clone(),
-                oid: self.snmp_oid.clone(),
             }),
         }
     }
@@ -337,17 +323,6 @@ impl NetworkMonitorApp {
                     ui.end_row();
                     ui.label("Timeout (s):");
                     ui.text_edit_singleline(&mut form.ping_timeout);
-                    ui.end_row();
-                }
-                MonitorTypeForm::Snmp => {
-                    ui.label("Target:");
-                    ui.text_edit_singleline(&mut form.snmp_target);
-                    ui.end_row();
-                    ui.label("Community:");
-                    ui.text_edit_singleline(&mut form.snmp_community);
-                    ui.end_row();
-                    ui.label("OID:");
-                    ui.text_edit_singleline(&mut form.snmp_oid);
                     ui.end_row();
                 }
             }

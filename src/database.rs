@@ -40,10 +40,7 @@ impl Database {
                 http_expected_status INTEGER,
                 ping_host TEXT,
                 ping_count INTEGER,
-                ping_timeout INTEGER,
-                snmp_target TEXT,
-                snmp_community TEXT,
-                snmp_oid TEXT
+                ping_timeout INTEGER
             )",
             [],
         )?;
@@ -73,9 +70,6 @@ impl Database {
             ping_host,
             ping_count,
             ping_timeout,
-            snmp_target,
-            snmp_community,
-            snmp_oid,
         ) = node.detail.to_db_params();
 
         let status_str = node.status.to_string();
@@ -83,9 +77,8 @@ impl Database {
         conn.execute(
             "INSERT INTO nodes (
                 name, monitor_type, status, last_check, response_time, monitoring_interval,
-                http_url, http_expected_status, ping_host, ping_count, ping_timeout,
-                snmp_target, snmp_community, snmp_oid
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                http_url, http_expected_status, ping_host, ping_count, ping_timeout
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 node.name,
                 monitor_type,
@@ -98,9 +91,6 @@ impl Database {
                 ping_host,
                 ping_count,
                 ping_timeout,
-                snmp_target,
-                snmp_community,
-                snmp_oid,
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -116,9 +106,6 @@ impl Database {
             ping_host,
             ping_count,
             ping_timeout,
-            snmp_target,
-            snmp_community,
-            snmp_oid,
         ) = node.detail.to_db_params();
         
         let status_str = node.status.to_string();
@@ -127,9 +114,8 @@ impl Database {
             "UPDATE nodes SET
                 name = ?1, monitor_type = ?2, status = ?3, last_check = ?4, response_time = ?5,
                 monitoring_interval = ?6, http_url = ?7, http_expected_status = ?8,
-                ping_host = ?9, ping_count = ?10, ping_timeout = ?11, snmp_target = ?12,
-                snmp_community = ?13, snmp_oid = ?14
-            WHERE id = ?15",
+                ping_host = ?9, ping_count = ?10, ping_timeout = ?11
+            WHERE id = ?12",
             params![
                 node.name,
                 monitor_type,
@@ -142,9 +128,6 @@ impl Database {
                 ping_host,
                 ping_count,
                 ping_timeout,
-                snmp_target,
-                snmp_community,
-                snmp_oid,
                 node.id,
             ],
         )?;
@@ -156,8 +139,7 @@ impl Database {
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare(
             "SELECT id, name, monitor_type, status, last_check, response_time, monitoring_interval,
-                    http_url, http_expected_status, ping_host, ping_count, ping_timeout,
-                    snmp_target, snmp_community, snmp_oid
+                    http_url, http_expected_status, ping_host, ping_count, ping_timeout
              FROM nodes ORDER BY name",
         )?;
         let nodes = stmt.query_map([], |row| self.row_to_node(row))?;
@@ -212,16 +194,13 @@ impl Database {
 }
 
 impl MonitorDetail {
-    fn to_db_params(&self) -> (&'static str, Option<String>, Option<u16>, Option<String>, Option<u32>, Option<u64>, Option<String>, Option<String>, Option<String>) {
+    fn to_db_params(&self) -> (&'static str, Option<String>, Option<u16>, Option<String>, Option<u32>, Option<u64>) {
         match self {
             MonitorDetail::Http { url, expected_status } => (
-                "http", Some(url.clone()), Some(*expected_status), None, None, None, None, None, None
+                "http", Some(url.clone()), Some(*expected_status), None, None, None
             ),
             MonitorDetail::Ping { host, count, timeout } => (
-                "ping", None, None, Some(host.clone()), Some(*count), Some(*timeout), None, None, None
-            ),
-            MonitorDetail::Snmp { target, community, oid } => (
-                "snmp", None, None, None, None, None, Some(target.clone()), Some(community.clone()), Some(oid.clone())
+                "ping", None, None, Some(host.clone()), Some(*count), Some(*timeout)
             ),
         }
     }
@@ -237,11 +216,6 @@ impl MonitorDetail {
                 host: row.get("ping_host")?,
                 count: row.get("ping_count")?,
                 timeout: row.get("ping_timeout")?,
-            }),
-            "snmp" => Ok(MonitorDetail::Snmp {
-                target: row.get("snmp_target")?,
-                community: row.get("snmp_community")?,
-                oid: row.get("snmp_oid")?,
             }),
             _ => Err(rusqlite::Error::InvalidColumnType(0, "monitor_type".to_string(), rusqlite::types::Type::Text)),
         }
@@ -307,22 +281,6 @@ mod tests {
         }
     }
 
-    /// Creates a test SNMP node
-    fn create_test_snmp_node() -> Node {
-        Node {
-            id: None,
-            name: "Test SNMP Node".to_string(),
-            detail: MonitorDetail::Snmp {
-                target: "192.168.1.1".to_string(),
-                community: "public".to_string(),
-                oid: "1.3.6.1.2.1.1.1.0".to_string(),
-            },
-            status: NodeStatus::Unknown,
-            last_check: None,
-            response_time: None,
-            monitoring_interval: 120,
-        }
-    }
 
     #[test]
     fn test_database_creation() {
@@ -389,34 +347,6 @@ mod tests {
         fs::remove_file(temp_file.path()).unwrap();
     }
 
-    #[test]
-    fn test_add_and_get_snmp_node() {
-        let (db, temp_file) = create_test_database();
-        let node = create_test_snmp_node();
-        
-        let id = db.add_node(&node).unwrap();
-        assert!(id > 0);
-        
-        let nodes = db.get_all_nodes().unwrap();
-        assert_eq!(nodes.len(), 1);
-        
-        let retrieved_node = &nodes[0];
-        assert_eq!(retrieved_node.id, Some(id));
-        assert_eq!(retrieved_node.name, "Test SNMP Node");
-        assert_eq!(retrieved_node.status, NodeStatus::Unknown);
-        assert_eq!(retrieved_node.monitoring_interval, 120);
-        
-        if let MonitorDetail::Snmp { target, community, oid } = &retrieved_node.detail {
-            assert_eq!(target, "192.168.1.1");
-            assert_eq!(community, "public");
-            assert_eq!(oid, "1.3.6.1.2.1.1.1.0");
-        } else {
-            panic!("Expected SNMP monitor detail");
-        }
-        
-        drop(db);
-        fs::remove_file(temp_file.path()).unwrap();
-    }
 
     #[test]
     fn test_update_node() {
@@ -488,19 +418,16 @@ mod tests {
         
         let http_node = create_test_http_node();
         let ping_node = create_test_ping_node();
-        let snmp_node = create_test_snmp_node();
         
         db.add_node(&http_node).unwrap();
         db.add_node(&ping_node).unwrap();
-        db.add_node(&snmp_node).unwrap();
         
         let nodes = db.get_all_nodes().unwrap();
-        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes.len(), 2);
         
         // Check that nodes are ordered by name
         assert_eq!(nodes[0].name, "Test HTTP Node");
         assert_eq!(nodes[1].name, "Test Ping Node");
-        assert_eq!(nodes[2].name, "Test SNMP Node");
         
         drop(db);
         fs::remove_file(temp_file.path()).unwrap();
@@ -536,16 +463,6 @@ mod tests {
         assert_eq!(params.4, Some(4));
         assert_eq!(params.5, Some(5));
         
-        let snmp_detail = MonitorDetail::Snmp {
-            target: "192.168.1.1".to_string(),
-            community: "public".to_string(),
-            oid: "1.3.6.1.2.1.1.1.0".to_string(),
-        };
-        let params = snmp_detail.to_db_params();
-        assert_eq!(params.0, "snmp");
-        assert_eq!(params.6, Some("192.168.1.1".to_string()));
-        assert_eq!(params.7, Some("public".to_string()));
-        assert_eq!(params.8, Some("1.3.6.1.2.1.1.1.0".to_string()));
     }
 
     #[test]

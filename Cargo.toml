@@ -15,7 +15,6 @@ rusqlite = { version = "0.31", features = ["chrono", "bundled"] }
 reqwest = { version = "0.12", features = ["blocking"] }
 tokio = { version = "1.0", features = ["full"] }
 ping = "0.5"
-snmp = "0.2.2"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
