@@ -17,7 +17,6 @@ use tokio;
 enum MonitorTypeForm {
     Http,
     Ping,
-    Snmp,
 }
 
 impl fmt::Display for MonitorTypeForm {
@@ -25,7 +24,6 @@ impl fmt::Display for MonitorTypeForm {
         match self {
             MonitorTypeForm::Http => write!(f, "HTTP"),
             MonitorTypeForm::Ping => write!(f, "Ping"),
-            MonitorTypeForm::Snmp => write!(f, "SNMP"),
         }
     }
 }
@@ -43,10 +41,6 @@ struct NodeForm {
     ping_host: String,
     ping_count: String,
     ping_timeout: String,
-    // SNMP
-    snmp_target: String,
-    snmp_community: String,
-    snmp_oid: String,
 }
 
 impl Default for NodeForm {
@@ -60,9 +54,6 @@ impl Default for NodeForm {
             ping_host: String::new(),
             ping_count: "4".to_string(),
             ping_timeout: "5".to_string(),
-            snmp_target: String::new(),
-            snmp_community: "public".to_string(),
-            snmp_oid: "1.3.6.1.2.1.1.1.0".to_string(),
         }
     }
 }
@@ -78,11 +69,6 @@ impl NodeForm {
                 host: self.ping_host.clone(),
                 count: self.ping_count.parse()?,
                 timeout: self.ping_timeout.parse()?,
-            }),
-            MonitorTypeForm::Snmp => Ok(MonitorDetail::Snmp {
-                target: self.snmp_target.clone(),
-                community: self.snmp_community.clone(),
-                oid: self.snmp_oid.clone(),
             }),
         }
     }
@@ -103,12 +89,6 @@ impl NodeForm {
                 form.ping_host = host.clone();
                 form.ping_count = count.to_string();
                 form.ping_timeout = timeout.to_string();
-            }
-            MonitorDetail::Snmp { target, community, oid } => {
-                form.monitor_type = MonitorTypeForm::Snmp;
-                form.snmp_target = target.clone();
-                form.snmp_community = community.clone();
-                form.snmp_oid = oid.clone();
             }
         }
         form
@@ -222,7 +202,6 @@ impl NetworkMonitorApp {
                         let target = match &node.detail {
                             MonitorDetail::Http { url, .. } => url.as_str(),
                             MonitorDetail::Ping { host, .. } => host.as_str(),
-                            MonitorDetail::Snmp { target, .. } => target.as_str(),
                         };
                         ui.label(target);
                         ui.label(node.detail.to_string());
@@ -315,7 +294,6 @@ impl NetworkMonitorApp {
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut form.monitor_type, MonitorTypeForm::Http, "HTTP");
                     ui.selectable_value(&mut form.monitor_type, MonitorTypeForm::Ping, "Ping");
-                    ui.selectable_value(&mut form.monitor_type, MonitorTypeForm::Snmp, "SNMP");
                 });
             ui.end_row();
 
@@ -337,17 +315,6 @@ impl NetworkMonitorApp {
                     ui.end_row();
                     ui.label("Timeout (s):");
                     ui.text_edit_singleline(&mut form.ping_timeout);
-                    ui.end_row();
-                }
-                MonitorTypeForm::Snmp => {
-                    ui.label("Target:");
-                    ui.text_edit_singleline(&mut form.snmp_target);
-                    ui.end_row();
-                    ui.label("Community:");
-                    ui.text_edit_singleline(&mut form.snmp_community);
-                    ui.end_row();
-                    ui.label("OID:");
-                    ui.text_edit_singleline(&mut form.snmp_oid);
                     ui.end_row();
                 }
             }

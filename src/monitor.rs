@@ -16,9 +16,6 @@ pub async fn check_node(node: &Node) -> Result<MonitoringResult> {
             // The `ping` crate doesn't support a `count` parameter in this function signature
             check_ping(host, *timeout).await
         }
-        MonitorDetail::Snmp { target, community, oid } => {
-            check_snmp(target, community, oid).await
-        }
     };
     let response_time = start_time.elapsed().as_millis() as u64;
 
@@ -58,28 +55,6 @@ async fn check_ping(host: &str, timeout: u64) -> Result<String> {
     match ping::ping(addr, Some(Duration::from_secs(timeout)), None, None, None, None) {
         Ok(_) => Ok("Ping successful".to_string()),
         Err(e) => Err(anyhow!("Ping failed: {}", e)),
-    }
-}
-
-async fn check_snmp(target: &str, community: &str, oid: &str) -> Result<String> {
-    info!("Checking SNMP for {}", target);
-    // The `snmp` crate's `get` method takes an OID as a slice of u32 integers.
-    let oid_parts: std::result::Result<Vec<u32>, _> = oid.split('.').map(|s| s.parse::<u32>()).collect();
-    let oid_vec = match oid_parts {
-        Ok(vec) => vec,
-        Err(e) => return Err(anyhow!("Invalid OID '{}': {}", oid, e)),
-    };
-
-    // The session must be mutable to be used.
-    let mut session = snmp::SyncSession::new(target, community.as_bytes(), Some(Duration::from_secs(2)), 0)
-        .map_err(|e| anyhow!("SNMP Session error: {:?}", e))?;
-
-    let mut response = session.get(&oid_vec).map_err(|e| anyhow!("SNMP GET error: {:?}", e))?;
-    
-    if let Some((_oid, val)) = response.varbinds.next() {
-        Ok(format!("{:?}", val))
-    } else {
-        Err(anyhow!("No SNMP response"))
     }
 }
 
@@ -212,20 +187,6 @@ mod tests {
         assert!(error.to_string().contains("Invalid IP address"));
     }
 
-    #[tokio::test]
-    async fn test_check_snmp_invalid_oid() {
-        let result = check_snmp("127.0.0.1", "public", "invalid.oid").await;
-        assert!(result.is_err());
-        let error = result.unwrap_err();
-        assert!(error.to_string().contains("Invalid OID"));
-    }
-
-    #[tokio::test]
-    async fn test_check_snmp_invalid_target() {
-        let result = check_snmp("invalid-target", "public", "1.3.6.1.2.1.1.1.0").await;
-        // This should fail since the target is invalid
-        assert!(result.is_err());
-    }
 
     #[test]
     fn test_monitoring_result_structure() {
@@ -278,20 +239,6 @@ mod tests {
                 assert_eq!(timeout, 5);
             }
             _ => panic!("Expected Ping variant"),
-        }
-
-        let snmp_detail = MonitorDetail::Snmp {
-            target: "192.168.1.1".to_string(),
-            community: "public".to_string(),
-            oid: "1.3.6.1.2.1.1.1.0".to_string(),
-        };
-        match snmp_detail {
-            MonitorDetail::Snmp { target, community, oid } => {
-                assert_eq!(target, "192.168.1.1");
-                assert_eq!(community, "public");
-                assert_eq!(oid, "1.3.6.1.2.1.1.1.0");
-            }
-            _ => panic!("Expected SNMP variant"),
         }
     }
 } 

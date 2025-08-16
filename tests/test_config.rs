@@ -13,14 +13,10 @@ pub struct TestEnvironment {
     pub http_timeout: u64,
     /// Timeout for ping tests in seconds
     pub ping_timeout: u64,
-    /// Timeout for SNMP tests in seconds
-    pub snmp_timeout: u64,
     /// Base URL for HTTP testing
     pub http_test_url: String,
     /// Test host for ping testing
     pub ping_test_host: String,
-    /// Test target for SNMP testing
-    pub snmp_test_target: String,
 }
 
 impl Default for TestEnvironment {
@@ -31,10 +27,8 @@ impl Default for TestEnvironment {
             run_integration_tests: true,
             http_timeout: 10,
             ping_timeout: 5,
-            snmp_timeout: 5,
             http_test_url: "https://httpbin.org".to_string(),
             ping_test_host: "127.0.0.1".to_string(),
-            snmp_test_target: "127.0.0.1".to_string(),
         }
     }
 }
@@ -76,11 +70,6 @@ impl TestEnvironment {
             }
         }
         
-        if let Ok(val) = env::var("NET_MONITOR_SNMP_TIMEOUT") {
-            if let Ok(timeout) = val.parse() {
-                env.snmp_timeout = timeout;
-            }
-        }
         
         // Override test URLs/hosts if specified
         if let Ok(url) = env::var("NET_MONITOR_HTTP_TEST_URL") {
@@ -89,10 +78,6 @@ impl TestEnvironment {
         
         if let Ok(host) = env::var("NET_MONITOR_PING_TEST_HOST") {
             env.ping_test_host = host;
-        }
-        
-        if let Ok(target) = env::var("NET_MONITOR_SNMP_TEST_TARGET") {
-            env.snmp_test_target = target;
         }
         
         env
@@ -121,10 +106,8 @@ impl TestEnvironment {
             run_integration_tests: true,
             http_timeout: 5,
             ping_timeout: 2,
-            snmp_timeout: 2,
             http_test_url: "https://httpbin.org".to_string(),
             ping_test_host: "127.0.0.1".to_string(),
-            snmp_test_target: "127.0.0.1".to_string(),
         }
     }
     
@@ -136,10 +119,8 @@ impl TestEnvironment {
             run_integration_tests: true,
             http_timeout: 15,
             ping_timeout: 10,
-            snmp_timeout: 10,
             http_test_url: "https://httpbin.org".to_string(),
             ping_test_host: "127.0.0.1".to_string(),
-            snmp_test_target: "127.0.0.1".to_string(),
         }
     }
 }
@@ -248,7 +229,6 @@ mod tests {
         assert!(env.run_integration_tests);
         assert_eq!(env.http_timeout, 10);
         assert_eq!(env.ping_timeout, 5);
-        assert_eq!(env.snmp_timeout, 5);
     }
 
     #[test]
@@ -259,7 +239,6 @@ mod tests {
         assert!(env.run_integration_tests);
         assert_eq!(env.http_timeout, 5);
         assert_eq!(env.ping_timeout, 2);
-        assert_eq!(env.snmp_timeout, 2);
     }
 
     #[test]
