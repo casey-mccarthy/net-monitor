@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(rustup:*)",
+      "Bash(powershell:*)",
+      "Bash(cargo clean:*)",
+      "Bash(cargo run:*)",
+      "Bash(where:*)",
+      "Bash(winget install:*)",
+      "Bash(set PATH=%PATH%)",
+      "Bash(C:msys64mingw64bin)",
+      "Bash(C:msys64usrbin)",
+      "Bash($env:PATH += \";C:\\msys64\\mingw64\\bin;C:\\msys64\\usr\\bin\")",
+      "Bash(C:msys64mingw64bindlltool.exe --version)",
+      "Bash(\"C:\\msys64\\usr\\bin\\pacman.exe\" -S mingw-w64-x86_64-toolchain --noconfirm)",
+      "Bash(test:*)",
+      "Bash(copy \"C:\\msys64\\mingw64\\bin\\dlltool.exe\" \"C:\\Users\\casey\\.cargo\\bin\"\")",
+      "Bash(cmd /c copy:*)",
+      "Bash(cp:*)",
+      "Bash(set CC=C:msys64mingw64bingcc.exe)",
+      "Bash(set AR=C:msys64mingw64binar.exe)",
+      "Bash(export:*)"
+    ],
+    "deny": []
+  }
+}

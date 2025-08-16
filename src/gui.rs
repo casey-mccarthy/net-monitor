@@ -90,12 +90,6 @@ impl NodeForm {
                 form.ping_count = count.to_string();
                 form.ping_timeout = timeout.to_string();
             }
-            MonitorDetail::Snmp { target, community, oid } => {
-                form.monitor_type = MonitorTypeForm::Snmp;
-                form.snmp_target = target.clone();
-                form.snmp_community = community.clone();
-                form.snmp_oid = oid.clone();
-            }
         }
         form
     }
@@ -208,7 +202,6 @@ impl NetworkMonitorApp {
                         let target = match &node.detail {
                             MonitorDetail::Http { url, .. } => url.as_str(),
                             MonitorDetail::Ping { host, .. } => host.as_str(),
-                            MonitorDetail::Snmp { target, .. } => target.as_str(),
                         };
                         ui.label(target);
                         ui.label(node.detail.to_string());
@@ -301,7 +294,6 @@ impl NetworkMonitorApp {
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut form.monitor_type, MonitorTypeForm::Http, "HTTP");
                     ui.selectable_value(&mut form.monitor_type, MonitorTypeForm::Ping, "Ping");
-                    ui.selectable_value(&mut form.monitor_type, MonitorTypeForm::Snmp, "SNMP");
                 });
             ui.end_row();
 
