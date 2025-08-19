@@ -160,11 +160,27 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install cross-compilation dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-pc-windows-gnu'
+      - name: Install system dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            libatk1.0-dev \
+            libgdk-pixbuf-2.0-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libgl1-mesa-dev \
+            libasound2-dev
+          
+          # Install cross-compilation dependencies for Windows target
+          if [[ "${{ matrix.target }}" == "x86_64-pc-windows-gnu" ]]; then
+            sudo apt-get install -y gcc-mingw-w64-x86-64
+          fi
 
       - name: Build
         run: |
