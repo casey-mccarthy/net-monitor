@@ -113,6 +113,7 @@ pub struct NetworkMonitorApp {
 
 struct MonitoringHandle {
     stop_tx: mpsc::Sender<()>,
+    config_tx: mpsc::Sender<NodeConfigUpdate>,
     #[allow(dead_code)]
     thread: thread::JoinHandle<()>,
 }
@@ -429,6 +430,14 @@ impl NetworkMonitorApp {
                     Ok(id) => {
                         let mut new_node = node;
                         new_node.id = Some(id);
+                        
+                        // Send update to monitoring thread if it's running
+                        if let Some(handle) = &self.monitoring_handle {
+                            if let Err(e) = handle.config_tx.send(NodeConfigUpdate::Add(new_node.clone())) {
+                                error!("Failed to send node addition to monitoring thread: {}", e);
+                            }
+                        }
+                        
                         self.nodes.push(new_node);
                         self.set_status_message("Node added successfully".to_string());
                     }
@@ -457,6 +466,12 @@ impl NetworkMonitorApp {
                         error!("Failed to update node in database: {}", e);
                         self.set_status_message(format!("Error updating node: {}", e));
                     } else {
+                        // Send update to monitoring thread if it's running
+                        if let Some(handle) = &self.monitoring_handle {
+                            if let Err(e) = handle.config_tx.send(NodeConfigUpdate::Update(node.clone())) {
+                                error!("Failed to send node update to monitoring thread: {}", e);
+                            }
+                        }
                         self.set_status_message("Node updated successfully".to_string());
                     }
                 }
@@ -482,6 +497,12 @@ impl NetworkMonitorApp {
                 if let Some(node) = self.nodes.get(index).cloned() {
                     if let Some(id) = node.id {
                         if self.database.delete_node(id).is_ok() {
+                            // Send update to monitoring thread if it's running
+                            if let Some(handle) = &self.monitoring_handle {
+                                if let Err(e) = handle.config_tx.send(NodeConfigUpdate::Delete(id)) {
+                                    error!("Failed to send node deletion to monitoring thread: {}", e);
+                                }
+                            }
                             self.nodes.remove(index);
                             self.set_status_message("Node deleted".to_string());
                         } else {
@@ -508,6 +529,7 @@ impl NetworkMonitorApp {
     fn start_monitoring(&mut self) {
         info!("Starting monitoring thread");
         let (stop_tx, stop_rx) = mpsc::channel();
+        let (config_tx, config_rx) = mpsc::channel();
         let db = self.database.clone();
         let update_tx = self.update_tx.clone();
         
@@ -516,12 +538,48 @@ impl NetworkMonitorApp {
         let thread = thread::spawn(move || {
             let mut last_check_times: HashMap<i64, Instant> = HashMap::new();
             let mut previous_statuses: HashMap<i64, NodeStatus> = HashMap::new();
+            let mut current_nodes = initial_nodes.clone();
             let runtime = tokio::runtime::Runtime::new().unwrap();
 
             loop {
-                // In a real app, you might want to get a fresh list of nodes periodically from the DB
-                // For now, we work with the initial set to keep it simple.
-                let mut nodes_to_check = initial_nodes.clone();
+                // Check for configuration updates
+                while let Ok(config_update) = config_rx.try_recv() {
+                    match config_update {
+                        NodeConfigUpdate::Add(node) => {
+                            info!("Adding new node to monitoring: {}", node.name);
+                            if !current_nodes.iter().any(|n| n.id == node.id) {
+                                current_nodes.push(node);
+                            }
+                        }
+                        NodeConfigUpdate::Update(updated_node) => {
+                            info!("Updating node configuration: {}", updated_node.name);
+                            if let Some(node) = current_nodes.iter_mut().find(|n| n.id == updated_node.id) {
+                                // Preserve the current status and last check time
+                                let status = node.status.clone();
+                                let last_check = node.last_check;
+                                let response_time = node.response_time;
+                                
+                                *node = updated_node;
+                                node.status = status;
+                                node.last_check = last_check;
+                                node.response_time = response_time;
+                                
+                                // Reset the check timer if monitoring interval changed
+                                if let Some(node_id) = node.id {
+                                    last_check_times.remove(&node_id);
+                                }
+                            }
+                        }
+                        NodeConfigUpdate::Delete(node_id) => {
+                            info!("Removing node from monitoring: ID {}", node_id);
+                            current_nodes.retain(|n| n.id != Some(node_id));
+                            last_check_times.remove(&node_id);
+                            previous_statuses.remove(&node_id);
+                        }
+                    }
+                }
+                
+                let mut nodes_to_check = current_nodes.clone();
 
                 for node in &mut nodes_to_check {
                     let node_id = node.id.unwrap_or(0);
@@ -620,7 +678,7 @@ impl NetworkMonitorApp {
             }
         });
 
-        self.monitoring_handle = Some(MonitoringHandle { stop_tx, thread });
+        self.monitoring_handle = Some(MonitoringHandle { stop_tx, config_tx, thread });
         self.set_status_message("Monitoring started".to_string());
     }
 
@@ -640,8 +698,9 @@ impl NetworkMonitorApp {
                 Ok(data) => match serde_json::from_str::<Vec<NodeImport>>(&data) {
                     Ok(nodes_to_import) => {
                         let mut count = 0;
+                        let mut added_nodes = Vec::new();
                         for import in nodes_to_import {
-                            let node = Node {
+                            let mut node = Node {
                                 id: None,
                                 name: import.name,
                                 detail: import.detail,
@@ -650,10 +709,22 @@ impl NetworkMonitorApp {
                                 response_time: None,
                                 monitoring_interval: import.monitoring_interval,
                             };
-                            if self.database.add_node(&node).is_ok() {
+                            if let Ok(id) = self.database.add_node(&node) {
+                                node.id = Some(id);
+                                added_nodes.push(node);
                                 count += 1;
                             }
                         }
+                        
+                        // Send all imported nodes to monitoring thread if it's running
+                        if let Some(handle) = &self.monitoring_handle {
+                            for node in added_nodes {
+                                if let Err(e) = handle.config_tx.send(NodeConfigUpdate::Add(node)) {
+                                    error!("Failed to send imported node to monitoring thread: {}", e);
+                                }
+                            }
+                        }
+                        
                         self.set_status_message(format!("Imported {} nodes", count));
                         self.reload_nodes();
                     }
@@ -747,4 +818,11 @@ impl NetworkMonitorApp {
 enum NodeAction {
     Edit(usize),
     Delete(usize),
+}
+
+#[derive(Clone)]
+enum NodeConfigUpdate {
+    Add(Node),
+    Update(Node),
+    Delete(i64),
 } 
