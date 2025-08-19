@@ -1,0 +1,250 @@
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version-changed: ${{ steps.check.outputs.version-changed }}
+      new-version: ${{ steps.check.outputs.new-version }}
+      version-type: ${{ steps.check.outputs.version-type }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for version change and determine bump type
+        id: check
+        run: |
+          # Get the last commit that changed Cargo.toml
+          LAST_VERSION_COMMIT=$(git log -1 --format=%H -- Cargo.toml)
+          
+          # Get commits since last version change
+          if [ "$LAST_VERSION_COMMIT" != "${{ github.sha }}" ]; then
+            COMMITS=$(git log --format=%s ${LAST_VERSION_COMMIT}..HEAD)
+          else
+            # If this commit changed Cargo.toml, check commits since previous version
+            COMMITS=$(git log --format=%s HEAD~1..HEAD)
+          fi
+          
+          echo "Commits to analyze:"
+          echo "$COMMITS"
+          
+          # Determine version bump type based on conventional commits
+          VERSION_TYPE="none"
+          
+          # Check for breaking changes (major bump)
+          if echo "$COMMITS" | grep -qE "(BREAKING CHANGE|!:)"; then
+            VERSION_TYPE="major"
+          # Check for features (minor bump)
+          elif echo "$COMMITS" | grep -qE "^feat(\(.+\))?:"; then
+            VERSION_TYPE="minor"
+          # Check for fixes (patch bump)
+          elif echo "$COMMITS" | grep -qE "^fix(\(.+\))?:"; then
+            VERSION_TYPE="patch"
+          fi
+          
+          echo "version-type=$VERSION_TYPE" >> $GITHUB_OUTPUT
+          
+          if [ "$VERSION_TYPE" != "none" ]; then
+            # Get current version from Cargo.toml
+            CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+            echo "Current version: $CURRENT_VERSION"
+            
+            # Split version into components
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+            
+            # Bump version based on type
+            case $VERSION_TYPE in
+              "major")
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              "minor")
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              "patch")
+                PATCH=$((PATCH + 1))
+                ;;
+            esac
+            
+            NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            echo "New version: $NEW_VERSION"
+            
+            echo "version-changed=true" >> $GITHUB_OUTPUT
+            echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "version-changed=false" >> $GITHUB_OUTPUT
+            echo "No version bump needed"
+          fi
+
+  update-version:
+    needs: check-version
+    if: needs.check-version.outputs.version-changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update version in Cargo.toml
+        run: |
+          NEW_VERSION="${{ needs.check-version.outputs.new-version }}"
+          sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
+          
+          # Verify the change
+          echo "Updated Cargo.toml:"
+          grep "^version = " Cargo.toml
+
+      - name: Commit version bump
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add Cargo.toml
+          git commit -m "chore: bump version to ${{ needs.check-version.outputs.new-version }}"
+          git tag "v${{ needs.check-version.outputs.new-version }}"
+          git push origin main
+          git push origin "v${{ needs.check-version.outputs.new-version }}"
+
+  build:
+    needs: [check-version, update-version]
+    if: needs.check-version.outputs.version-changed == 'true'
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-pc-windows-gnu
+            os: ubuntu-latest
+            name: net-monitor-windows-x64.exe
+            archive: net-monitor-v${{ needs.check-version.outputs.new-version }}-windows-x64.zip
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: net-monitor-linux-x64
+            archive: net-monitor-v${{ needs.check-version.outputs.new-version }}-linux-x64.tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: net-monitor-macos-x64
+            archive: net-monitor-v${{ needs.check-version.outputs.new-version }}-macos-x64.tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: net-monitor-macos-arm64
+            archive: net-monitor-v${{ needs.check-version.outputs.new-version }}-macos-arm64.tar.gz
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: "v${{ needs.check-version.outputs.new-version }}"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cross-compilation dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-pc-windows-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: Build
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare binary
+        run: |
+          mkdir -p artifacts
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            cp target/${{ matrix.target }}/release/net-monitor.exe artifacts/${{ matrix.name }}
+          else
+            cp target/${{ matrix.target }}/release/net-monitor artifacts/${{ matrix.name }}
+            strip artifacts/${{ matrix.name }}
+          fi
+
+      - name: Create archive
+        run: |
+          cd artifacts
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            zip -r ${{ matrix.archive }} ${{ matrix.name }}
+          else
+            tar -czf ${{ matrix.archive }} ${{ matrix.name }}
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: artifacts/${{ matrix.archive }}
+
+  release:
+    needs: [check-version, update-version, build]
+    if: needs.check-version.outputs.version-changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: "v${{ needs.check-version.outputs.new-version }}"
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate release notes
+        run: |
+          # Get commits since last release
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          if [ -n "$LAST_TAG" ]; then
+            COMMITS=$(git log --format="* %s" ${LAST_TAG}..HEAD)
+          else
+            COMMITS=$(git log --format="* %s")
+          fi
+          
+          echo "# Release v${{ needs.check-version.outputs.new-version }}" > release_notes.md
+          echo "" >> release_notes.md
+          echo "## Changes" >> release_notes.md
+          echo "$COMMITS" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## Assets" >> release_notes.md
+          echo "Download the appropriate binary for your platform:" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "- **Windows**: \`net-monitor-v${{ needs.check-version.outputs.new-version }}-windows-x64.zip\`" >> release_notes.md
+          echo "- **macOS (Intel)**: \`net-monitor-v${{ needs.check-version.outputs.new-version }}-macos-x64.tar.gz\`" >> release_notes.md
+          echo "- **macOS (Apple Silicon)**: \`net-monitor-v${{ needs.check-version.outputs.new-version }}-macos-arm64.tar.gz\`" >> release_notes.md
+          echo "- **Linux**: \`net-monitor-v${{ needs.check-version.outputs.new-version }}-linux-x64.tar.gz\`" >> release_notes.md
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          find . -name "*.zip" -o -name "*.tar.gz" | xargs sha256sum > checksums.txt
+          echo "Generated checksums:"
+          cat checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ needs.check-version.outputs.new-version }}"
+          name: "Release v${{ needs.check-version.outputs.new-version }}"
+          body_path: release_notes.md
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.tar.gz
+            artifacts/checksums.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
