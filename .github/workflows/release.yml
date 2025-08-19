@@ -4,6 +4,11 @@ on:
   push:
     branches: [ main ]
 
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
 jobs:
   check-version:
     runs-on: ubuntu-latest
@@ -91,6 +96,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
 
       - name: Update version in Cargo.toml
         run: |
@@ -103,13 +109,13 @@ jobs:
 
       - name: Commit version bump
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
           git add Cargo.toml
           git commit -m "chore: bump version to ${{ needs.check-version.outputs.new-version }}"
           git tag "v${{ needs.check-version.outputs.new-version }}"
-          git push origin main
-          git push origin "v${{ needs.check-version.outputs.new-version }}"
+          git push
+          git push --tags
 
   build:
     needs: [check-version, update-version]
