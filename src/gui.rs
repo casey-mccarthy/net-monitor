@@ -10,8 +10,10 @@ use std::fmt;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
+use std::process::Command;
 use tracing::{error, info};
 use tokio;
+use directories::ProjectDirs;
 
 #[derive(Clone, Copy, PartialEq)]
 enum MonitorTypeForm {
@@ -106,6 +108,7 @@ pub struct NetworkMonitorApp {
     monitoring_handle: Option<MonitoringHandle>,
     update_rx: mpsc::Receiver<Node>,
     update_tx: mpsc::Sender<Node>,
+    updated_nodes: HashMap<i64, Instant>,
 }
 
 struct MonitoringHandle {
@@ -128,6 +131,7 @@ impl NetworkMonitorApp {
             monitoring_handle: None,
             update_rx,
             update_tx,
+            updated_nodes: HashMap::new(),
         })
     }
 }
@@ -142,9 +146,16 @@ impl eframe::App for NetworkMonitorApp {
         
         while let Ok(updated_node) = self.update_rx.try_recv() {
             if let Some(node) = self.nodes.iter_mut().find(|n| n.id == updated_node.id) {
+                if let Some(node_id) = updated_node.id {
+                    self.updated_nodes.insert(node_id, Instant::now());
+                }
                 *node = updated_node;
             }
         }
+        
+        // Clean up old flash animations (older than 1 second)
+        let now = Instant::now();
+        self.updated_nodes.retain(|_, timestamp| now.duration_since(*timestamp).as_millis() < 1000);
 
         self.show_main_window(ctx);
         self.show_add_node_window(ctx);
@@ -168,6 +179,9 @@ impl NetworkMonitorApp {
                 }
                 if ui.button("Export Nodes").clicked() {
                     self.export_nodes();
+                }
+                if ui.button("Open Log").clicked() {
+                    self.open_log_file();
                 }
                 self.monitoring_toggle_button(ui);
             });
@@ -198,6 +212,23 @@ impl NetworkMonitorApp {
                     ui.end_row();
 
                     for (i, node) in self.nodes.iter().enumerate() {
+                        // Check if this node was recently updated for flash effect
+                        let flash_intensity = if let Some(node_id) = node.id {
+                            if let Some(update_time) = self.updated_nodes.get(&node_id) {
+                                let elapsed = Instant::now().duration_since(*update_time).as_millis();
+                                if elapsed < 500 {
+                                    // Fade from 1.0 to 0.0 over 500ms
+                                    1.0 - (elapsed as f32 / 500.0)
+                                } else {
+                                    0.0
+                                }
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            0.0
+                        };
+                        
                         ui.label(&node.name);
                         let target = match &node.detail {
                             MonitorDetail::Http { url, .. } => url.as_str(),
@@ -211,11 +242,70 @@ impl NetworkMonitorApp {
                             NodeStatus::Unknown => Color32::YELLOW,
                         };
                         ui.colored_label(status_color, node.status.to_string());
+                        
+                        // Last check with glow effect
                         let last_check_str = node
                             .last_check
                             .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S").to_string())
                             .unwrap_or_else(|| "Never".to_string());
-                        ui.label(last_check_str);
+                        
+                        if flash_intensity > 0.0 {
+                            // Create a glowing effect by rendering the text multiple times with different alphas
+                            let response = ui.allocate_response(
+                                ui.available_size(),
+                                egui::Sense::hover()
+                            );
+                            let text_pos = response.rect.min;
+                            let painter = ui.painter();
+                            let font_id = egui::TextStyle::Body.resolve(ui.style());
+                            
+                            // Draw multiple layers for glow effect
+                            let glow_layers = [
+                                (3.0, 0.02),  // Outermost, most faded
+                                (2.0, 0.04),
+                                (1.0, 0.06),
+                                (0.5, 0.08),
+                            ];
+                            
+                            for (offset, alpha_multiplier) in glow_layers.iter() {
+                                let glow_alpha = (flash_intensity * alpha_multiplier * 255.0) as u8;
+                                let glow_color = Color32::from_rgba_unmultiplied(255, 255, 255, glow_alpha);
+                                
+                                // Draw glow in multiple directions for radial effect
+                                let offsets = [
+                                    egui::Vec2::new(*offset, 0.0),
+                                    egui::Vec2::new(-*offset, 0.0),
+                                    egui::Vec2::new(0.0, *offset),
+                                    egui::Vec2::new(0.0, -*offset),
+                                    egui::Vec2::new(*offset * 0.7, *offset * 0.7),
+                                    egui::Vec2::new(-*offset * 0.7, *offset * 0.7),
+                                    egui::Vec2::new(*offset * 0.7, -*offset * 0.7),
+                                    egui::Vec2::new(-*offset * 0.7, -*offset * 0.7),
+                                ];
+                                
+                                for offset_vec in offsets.iter() {
+                                    painter.text(
+                                        text_pos + *offset_vec,
+                                        egui::Align2::LEFT_TOP,
+                                        &last_check_str,
+                                        font_id.clone(),
+                                        glow_color,
+                                    );
+                                }
+                            }
+                            
+                            // Draw the main text on top
+                            painter.text(
+                                text_pos,
+                                egui::Align2::LEFT_TOP,
+                                &last_check_str,
+                                font_id,
+                                ui.visuals().text_color(),
+                            );
+                        } else {
+                            ui.label(last_check_str);
+                        }
+                        
                         ui.horizontal(|ui| {
                             if ui.button("Edit").clicked() {
                                 action = Some(NodeAction::Edit(i));
@@ -425,6 +515,7 @@ impl NetworkMonitorApp {
 
         let thread = thread::spawn(move || {
             let mut last_check_times: HashMap<i64, Instant> = HashMap::new();
+            let mut previous_statuses: HashMap<i64, NodeStatus> = HashMap::new();
             let runtime = tokio::runtime::Runtime::new().unwrap();
 
             loop {
@@ -444,10 +535,56 @@ impl NetworkMonitorApp {
 
                     if should_check {
                         last_check_times.insert(node_id, now);
+                        let previous_status = previous_statuses.get(&node_id).cloned();
                         let result = runtime.block_on(check_node(&node));
 
                         match result {
                             Ok(mut check_result) => {
+                                let new_status = check_result.status;
+                                
+                                // Log the check result with status
+                                match new_status {
+                                    NodeStatus::Online => {
+                                        info!("Node '{}' checked - Status: UP", node.name);
+                                    }
+                                    NodeStatus::Offline => {
+                                        info!("Node '{}' checked - Status: DOWN", node.name);
+                                    }
+                                    NodeStatus::Unknown => {
+                                        info!("Node '{}' checked - Status: UNKNOWN", node.name);
+                                    }
+                                }
+                                
+                                // Log status changes
+                                if let Some(prev_status) = previous_status {
+                                    if prev_status != new_status {
+                                        match (prev_status, new_status) {
+                                            (NodeStatus::Online, NodeStatus::Offline) => {
+                                                error!("ALERT: Node '{}' went DOWN (was UP)", node.name);
+                                            }
+                                            (NodeStatus::Offline, NodeStatus::Online) => {
+                                                info!("RECOVERY: Node '{}' is back UP (was DOWN)", node.name);
+                                            }
+                                            (NodeStatus::Unknown, NodeStatus::Online) => {
+                                                info!("Node '{}' is now UP (was UNKNOWN)", node.name);
+                                            }
+                                            (NodeStatus::Unknown, NodeStatus::Offline) => {
+                                                error!("Node '{}' is now DOWN (was UNKNOWN)", node.name);
+                                            }
+                                            (NodeStatus::Online, NodeStatus::Unknown) => {
+                                                error!("Node '{}' status is now UNKNOWN (was UP)", node.name);
+                                            }
+                                            (NodeStatus::Offline, NodeStatus::Unknown) => {
+                                                error!("Node '{}' status is now UNKNOWN (was DOWN)", node.name);
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                
+                                // Update the previous status tracking
+                                previous_statuses.insert(node_id, new_status);
+                                
                                 node.status = check_result.status;
                                 node.last_check = Some(check_result.timestamp);
                                 node.response_time = check_result.response_time;
@@ -571,6 +708,39 @@ impl NetworkMonitorApp {
 
     fn get_current_time(&self) -> f64 {
         chrono::Utc::now().timestamp() as f64
+    }
+    
+    fn open_log_file(&mut self) {
+        if let Some(proj_dirs) = ProjectDirs::from("com", "casey", "net-monitor") {
+            let log_file = proj_dirs.data_dir().join("net-monitor.log");
+            
+            if log_file.exists() {
+                #[cfg(target_os = "windows")]
+                {
+                    if let Err(e) = Command::new("notepad").arg(&log_file).spawn() {
+                        self.set_status_message(format!("Failed to open log file: {}", e));
+                    }
+                }
+                
+                #[cfg(target_os = "macos")]
+                {
+                    if let Err(e) = Command::new("open").arg(&log_file).spawn() {
+                        self.set_status_message(format!("Failed to open log file: {}", e));
+                    }
+                }
+                
+                #[cfg(target_os = "linux")]
+                {
+                    if let Err(e) = Command::new("xdg-open").arg(&log_file).spawn() {
+                        self.set_status_message(format!("Failed to open log file: {}", e));
+                    }
+                }
+            } else {
+                self.set_status_message(format!("Log file not found at: {:?}", log_file));
+            }
+        } else {
+            self.set_status_message("Could not determine log file location".to_string());
+        }
     }
 }
 

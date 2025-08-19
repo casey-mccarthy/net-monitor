@@ -13,21 +13,34 @@ use directories::ProjectDirs;
 
 /// Main entry point for the network monitor application
 fn main() -> Result<()> {
-    // Setup logging
-    if let Some(proj_dirs) = project_dirs() {
+    // Setup logging - guard must be kept alive for the lifetime of the application
+    let _guard = if let Some(proj_dirs) = project_dirs() {
         let log_dir = proj_dirs.data_dir();
         std::fs::create_dir_all(log_dir)?;
-        let file_appender = tracing_appender::rolling::daily(log_dir, "net-monitor.log");
-        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+        let log_file = log_dir.join("net-monitor.log");
+        
+        // Open file in append mode to keep all logs in one file
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_file)?;
+        
+        let (non_blocking, guard) = tracing_appender::non_blocking(file);
         
         tracing_subscriber::registry()
-            .with(fmt::layer().with_writer(non_blocking))
-            .with(fmt::layer().with_writer(std::io::stdout))
+            .with(fmt::layer()
+                .with_writer(non_blocking)
+                .with_ansi(false)  // Disable ANSI color codes in log file
+                .with_target(false)  // Cleaner format without module paths
+            )
             .with(EnvFilter::from_default_env().add_directive("net_monitor=info".parse()?))
             .init();
+        
+        Some(guard)
     } else {
         tracing_subscriber::fmt::init();
-    }
+        None
+    };
 
     // Setup database
     let db_path = project_dirs().expect("Could not find project directories").data_dir().join("network_monitor.db");
