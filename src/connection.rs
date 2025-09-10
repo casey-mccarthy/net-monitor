@@ -8,6 +8,7 @@ pub trait ConnectionStrategy: Send + Sync {
     fn connect(&self, target: &str) -> Result<()>;
 
     /// Get a description of this connection strategy
+    #[allow(dead_code)]
     fn description(&self) -> &str;
 }
 
@@ -227,6 +228,7 @@ impl ConnectionContext {
     }
 
     /// Get the description of the current strategy
+    #[allow(dead_code)]
     pub fn description(&self) -> &str {
         self.strategy.description()
     }
@@ -243,6 +245,7 @@ pub fn create_connection_strategy(connection_type: ConnectionType) -> Box<dyn Co
 
 /// Enum representing different connection types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ConnectionType {
     Http,
     Ssh,
