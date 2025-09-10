@@ -183,17 +183,17 @@ impl Database {
     }
 }
 
+type DbParams = (
+    &'static str,
+    Option<String>,
+    Option<u16>,
+    Option<String>,
+    Option<u32>,
+    Option<u64>,
+);
+
 impl MonitorDetail {
-    fn to_db_params(
-        &self,
-    ) -> (
-        &'static str,
-        Option<String>,
-        Option<u16>,
-        Option<String>,
-        Option<u32>,
-        Option<u64>,
-    ) {
+    fn to_db_params(&self) -> DbParams {
         match self {
             MonitorDetail::Http {
                 url,
