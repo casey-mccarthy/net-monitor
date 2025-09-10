@@ -176,6 +176,7 @@ pub struct NetworkMonitorApp {
     credentials: Vec<CredentialSummary>,
     show_credentials: bool,
     show_add_credential: bool,
+    show_about: bool,
     #[allow(dead_code)]
     editing_credential: Option<String>,
     new_credential_form: CredentialForm,
@@ -225,6 +226,7 @@ impl NetworkMonitorApp {
             credentials,
             show_credentials: false,
             show_add_credential: false,
+            show_about: false,
             editing_credential: None,
             new_credential_form: CredentialForm::default(),
             pending_credential_action: None,
@@ -259,6 +261,7 @@ impl eframe::App for NetworkMonitorApp {
         self.show_edit_node_window(ctx);
         self.show_credentials_window(ctx);
         self.show_add_credential_window(ctx);
+        self.show_about_window(ctx);
 
         // Process pending credential actions
         self.process_pending_credential_action();
@@ -269,6 +272,18 @@ impl eframe::App for NetworkMonitorApp {
 
 impl NetworkMonitorApp {
     fn show_main_window(&mut self, ctx: &Context) {
+        // Add menu bar
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("Help", |ui| {
+                    if ui.button("About").clicked() {
+                        self.show_about = true;
+                        ui.close_menu();
+                    }
+                });
+            });
+        });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Network Monitor");
             ui.separator();
@@ -1577,6 +1592,54 @@ impl NetworkMonitorApp {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn show_about_window(&mut self, ctx: &egui::Context) {
+        if self.show_about {
+            let mut close_dialog = false;
+
+            egui::Window::new("About Network Monitor")
+                .resizable(false)
+                .collapsible(false)
+                .default_width(400.0)
+                .default_height(300.0)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .open(&mut self.show_about)
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.heading("Network Monitor");
+                        ui.add_space(10.0);
+
+                        ui.label(RichText::new("Version 0.2.1").strong());
+                        ui.add_space(5.0);
+
+                        ui.label("A simple network monitoring application");
+                        ui.label("written in Rust with a GUI interface.");
+                        ui.add_space(10.0);
+
+                        ui.label(RichText::new("Repository:").strong());
+                        if ui
+                            .link("https://github.com/casey-mccarthy/net-monitor")
+                            .clicked()
+                        {
+                            let _ = open::that("https://github.com/casey-mccarthy/net-monitor");
+                        }
+                        ui.add_space(10.0);
+
+                        ui.label(RichText::new("Author:").strong());
+                        ui.label("Casey McCarthy");
+                        ui.add_space(15.0);
+
+                        if ui.button("Close").clicked() {
+                            close_dialog = true;
+                        }
+                    });
+                });
+
+            if close_dialog {
+                self.show_about = false;
             }
         }
     }
