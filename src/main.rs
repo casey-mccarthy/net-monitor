@@ -1,4 +1,5 @@
 mod connection;
+mod credentials;
 mod database;
 mod gui;
 mod models;

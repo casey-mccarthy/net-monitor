@@ -444,6 +444,7 @@ impl NetworkMonitorApp {
                     last_check: None,
                     response_time: None,
                     monitoring_interval: form.monitoring_interval.parse().unwrap_or(60),
+                    credential_id: None,
                 };
                 match self.database.add_node(&node) {
                     Ok(id) => {
@@ -785,6 +786,7 @@ impl NetworkMonitorApp {
                                 last_check: None,
                                 response_time: None,
                                 monitoring_interval: import.monitoring_interval,
+                                credential_id: import.credential_id,
                             };
                             if let Ok(id) = self.database.add_node(&node) {
                                 node.id = Some(id);
@@ -828,6 +830,7 @@ impl NetworkMonitorApp {
                     name: node.name.clone(),
                     detail: node.detail.clone(),
                     monitoring_interval: node.monitoring_interval,
+                    credential_id: node.credential_id.clone(),
                 })
                 .collect();
 

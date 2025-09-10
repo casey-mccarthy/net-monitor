@@ -95,6 +95,7 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 60,
+            credential_id: None,
         }
     }
 
@@ -124,6 +125,7 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 60,
+            credential_id: None,
         };
 
         let result = check_node(&node).await;
@@ -149,6 +151,7 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 60,
+            credential_id: None,
         };
 
         let result = check_node(&node).await;

@@ -36,6 +36,7 @@ impl Database {
                 last_check TEXT,
                 response_time INTEGER,
                 monitoring_interval INTEGER NOT NULL DEFAULT 60,
+                credential_id TEXT,
                 http_url TEXT,
                 http_expected_status INTEGER,
                 ping_host TEXT,
@@ -57,6 +58,10 @@ impl Database {
             )",
             [],
         )?;
+
+        // Add credential_id column to existing nodes table if it doesn't exist
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN credential_id TEXT", []);
+
         Ok(())
     }
 
@@ -71,8 +76,8 @@ impl Database {
         conn.execute(
             "INSERT INTO nodes (
                 name, monitor_type, status, last_check, response_time, monitoring_interval,
-                http_url, http_expected_status, ping_host, ping_count, ping_timeout
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                credential_id, http_url, http_expected_status, ping_host, ping_count, ping_timeout
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 node.name,
                 monitor_type,
@@ -80,6 +85,7 @@ impl Database {
                 node.last_check.map(|dt| dt.to_rfc3339()),
                 node.response_time,
                 node.monitoring_interval,
+                node.credential_id,
                 http_url,
                 http_expected_status,
                 ping_host,
@@ -101,9 +107,9 @@ impl Database {
         conn.execute(
             "UPDATE nodes SET
                 name = ?1, monitor_type = ?2, status = ?3, last_check = ?4, response_time = ?5,
-                monitoring_interval = ?6, http_url = ?7, http_expected_status = ?8,
-                ping_host = ?9, ping_count = ?10, ping_timeout = ?11
-            WHERE id = ?12",
+                monitoring_interval = ?6, credential_id = ?7, http_url = ?8, http_expected_status = ?9,
+                ping_host = ?10, ping_count = ?11, ping_timeout = ?12
+            WHERE id = ?13",
             params![
                 node.name,
                 monitor_type,
@@ -111,6 +117,7 @@ impl Database {
                 node.last_check.map(|dt| dt.to_rfc3339()),
                 node.response_time,
                 node.monitoring_interval,
+                node.credential_id,
                 http_url,
                 http_expected_status,
                 ping_host,
@@ -179,6 +186,7 @@ impl Database {
             last_check,
             response_time: row.get("response_time")?,
             monitoring_interval: row.get("monitoring_interval")?,
+            credential_id: row.get("credential_id")?,
         })
     }
 }
@@ -281,6 +289,7 @@ mod tests {
             last_check: Some(Utc::now()),
             response_time: Some(150),
             monitoring_interval: 60,
+            credential_id: None,
         }
     }
 
@@ -298,6 +307,7 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 30,
+            credential_id: None,
         }
     }
 

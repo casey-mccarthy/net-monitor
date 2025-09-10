@@ -1,4 +1,5 @@
 use crate::connection::ConnectionType;
+use crate::credentials::CredentialId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -83,6 +84,8 @@ pub struct Node {
     pub response_time: Option<u64>,
     /// Monitoring interval in seconds
     pub monitoring_interval: u64,
+    /// Optional credential reference for connections
+    pub credential_id: Option<CredentialId>,
 }
 
 /// Represents a historical monitoring result
@@ -111,6 +114,8 @@ pub struct NodeImport {
     pub detail: MonitorDetail,
     /// Monitoring interval in seconds
     pub monitoring_interval: u64,
+    /// Optional credential reference for connections
+    pub credential_id: Option<CredentialId>,
 }
 
 #[cfg(test)]
@@ -182,6 +187,7 @@ mod tests {
             last_check: Some(Utc::now()),
             response_time: Some(150),
             monitoring_interval: 60,
+            credential_id: None,
         };
 
         assert_eq!(node.id, Some(1));
@@ -189,6 +195,7 @@ mod tests {
         assert_eq!(node.status, NodeStatus::Online);
         assert_eq!(node.response_time, Some(150));
         assert_eq!(node.monitoring_interval, 60);
+        assert_eq!(node.credential_id, None);
     }
 
     #[test]
@@ -205,6 +212,7 @@ mod tests {
             last_check: Some(Utc::now()),
             response_time: Some(150),
             monitoring_interval: 60,
+            credential_id: None,
         };
 
         let serialized = serde_json::to_string(&node).unwrap();
@@ -245,10 +253,12 @@ mod tests {
                 expected_status: 200,
             },
             monitoring_interval: 60,
+            credential_id: None,
         };
 
         assert_eq!(node_import.name, "Test Node");
         assert_eq!(node_import.monitoring_interval, 60);
+        assert_eq!(node_import.credential_id, None);
     }
 
     #[test]
@@ -260,6 +270,7 @@ mod tests {
                 expected_status: 200,
             },
             monitoring_interval: 60,
+            credential_id: None,
         };
 
         let serialized = serde_json::to_string(&node_import).unwrap();
