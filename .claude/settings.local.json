@@ -10,7 +10,9 @@
       "Bash(cargo:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(RUST_BACKTRACE=1 cargo run)",
+      "Bash(pkill:*)"
     ],
     "deny": [],
     "ask": []

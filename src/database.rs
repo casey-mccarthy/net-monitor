@@ -3,6 +3,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Row};
 use std::path::{Path, PathBuf};
+use tracing::info;
 
 /// Database manager for handling SQLite operations
 #[derive(Clone)]
@@ -60,8 +61,25 @@ impl Database {
         )?;
 
         // Add credential_id column to existing nodes table if it doesn't exist
-        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN credential_id TEXT", []);
+        self.migrate_credential_column(&conn)?;
 
+        Ok(())
+    }
+
+    /// Migrate to add credential_id column if it doesn't exist
+    fn migrate_credential_column(&self, conn: &Connection) -> Result<()> {
+        // Check if credential_id column already exists
+        let mut stmt = conn.prepare("PRAGMA table_info(nodes)")?;
+        let column_exists = stmt.query_map([], |row| {
+            let column_name: String = row.get(1)?;
+            Ok(column_name)
+        })?.any(|name| name.unwrap_or_default() == "credential_id");
+
+        if !column_exists {
+            conn.execute("ALTER TABLE nodes ADD COLUMN credential_id TEXT", [])?;
+            info!("Added credential_id column to nodes table");
+        }
+        
         Ok(())
     }
 
@@ -134,7 +152,7 @@ impl Database {
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare(
             "SELECT id, name, monitor_type, status, last_check, response_time, monitoring_interval,
-                    http_url, http_expected_status, ping_host, ping_count, ping_timeout
+                    credential_id, http_url, http_expected_status, ping_host, ping_count, ping_timeout
              FROM nodes ORDER BY name",
         )?;
         let nodes = stmt.query_map([], |row| self.row_to_node(row))?;
