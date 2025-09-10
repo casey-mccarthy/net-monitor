@@ -1,4 +1,7 @@
-use crate::connection::{create_connection_strategy, ConnectionContext};
+use crate::connection::{AuthenticatedConnectionStrategy, ConnectionStrategy};
+use crate::credentials::{
+    CredentialStore, CredentialSummary, FileCredentialStore, SensitiveString, SshCredential,
+};
 use crate::database::Database;
 use crate::models::{MonitorDetail, Node, NodeImport, NodeStatus};
 use crate::monitor::check_node;
@@ -8,6 +11,7 @@ use eframe::egui::{self, Color32, Context, Grid, RichText, ScrollArea, Ui, Windo
 use rfd::FileDialog;
 use std::collections::HashMap;
 use std::fmt;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
@@ -35,6 +39,7 @@ struct NodeForm {
     name: String,
     monitor_type: MonitorTypeForm,
     monitoring_interval: String,
+    credential_id: Option<String>,
     // HTTP
     http_url: String,
     http_expected_status: String,
@@ -44,17 +49,65 @@ struct NodeForm {
     ping_timeout: String,
 }
 
+/// Form data for creating/editing credentials
+#[derive(Clone)]
+struct CredentialForm {
+    name: String,
+    description: String,
+    credential_type: CredentialTypeForm,
+    username: String,
+    password: String,
+    ssh_key_path: String,
+    ssh_key_data: String,
+    passphrase: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum CredentialTypeForm {
+    Default,
+    Password,
+    KeyFile,
+    KeyData,
+}
+
 impl Default for NodeForm {
     fn default() -> Self {
         Self {
             name: String::new(),
             monitor_type: MonitorTypeForm::Http,
             monitoring_interval: "60".to_string(),
+            credential_id: None,
             http_url: "https://".to_string(),
             http_expected_status: "200".to_string(),
             ping_host: String::new(),
             ping_count: "4".to_string(),
             ping_timeout: "5".to_string(),
+        }
+    }
+}
+
+impl Default for CredentialForm {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            description: String::new(),
+            credential_type: CredentialTypeForm::Default,
+            username: String::new(),
+            password: String::new(),
+            ssh_key_path: String::new(),
+            ssh_key_data: String::new(),
+            passphrase: String::new(),
+        }
+    }
+}
+
+impl fmt::Display for CredentialTypeForm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CredentialTypeForm::Default => write!(f, "System Default"),
+            CredentialTypeForm::Password => write!(f, "Username/Password"),
+            CredentialTypeForm::KeyFile => write!(f, "SSH Key File"),
+            CredentialTypeForm::KeyData => write!(f, "SSH Key Data"),
         }
     }
 }
@@ -78,6 +131,7 @@ impl NodeForm {
         let mut form = Self {
             name: node.name.clone(),
             monitoring_interval: node.monitoring_interval.to_string(),
+            credential_id: node.credential_id.clone(),
             ..Default::default()
         };
 
@@ -117,6 +171,14 @@ pub struct NetworkMonitorApp {
     update_rx: mpsc::Receiver<Node>,
     update_tx: mpsc::Sender<Node>,
     updated_nodes: HashMap<i64, Instant>,
+    // Credential management
+    credential_store: Box<dyn CredentialStore>,
+    credentials: Vec<CredentialSummary>,
+    show_credentials: bool,
+    show_add_credential: bool,
+    editing_credential: Option<String>,
+    new_credential_form: CredentialForm,
+    pending_credential_action: Option<CredentialAction>,
 }
 
 struct MonitoringHandle {
@@ -130,6 +192,23 @@ impl NetworkMonitorApp {
     pub fn new(database: Database) -> Result<Self> {
         let nodes = database.get_all_nodes()?;
         let (update_tx, update_rx) = mpsc::channel();
+
+        // Initialize credential store - use file store since keyring list_credentials is not implemented
+        let credential_store: Box<dyn CredentialStore> =
+            match FileCredentialStore::new("default_password".to_string()) {
+                Ok(store) => {
+                    info!("Successfully created file credential store");
+                    Box::new(store)
+                }
+                Err(e) => {
+                    error!("Failed to initialize credential store: {}", e);
+                    return Err(e);
+                }
+            };
+
+        // Load existing credentials
+        let credentials = credential_store.list_credentials().unwrap_or_default();
+
         Ok(Self {
             database,
             nodes,
@@ -141,6 +220,13 @@ impl NetworkMonitorApp {
             update_rx,
             update_tx,
             updated_nodes: HashMap::new(),
+            credential_store,
+            credentials,
+            show_credentials: false,
+            show_add_credential: false,
+            editing_credential: None,
+            new_credential_form: CredentialForm::default(),
+            pending_credential_action: None,
         })
     }
 }
@@ -170,6 +256,12 @@ impl eframe::App for NetworkMonitorApp {
         self.show_main_window(ctx);
         self.show_add_node_window(ctx);
         self.show_edit_node_window(ctx);
+        self.show_credentials_window(ctx);
+        self.show_add_credential_window(ctx);
+
+        // Process pending credential actions
+        self.process_pending_credential_action();
+
         ctx.request_repaint_after(Duration::from_millis(500));
     }
 }
@@ -183,6 +275,10 @@ impl NetworkMonitorApp {
                 if ui.button("Add Node").clicked() {
                     self.show_add_node = true;
                     self.new_node_form = NodeForm::default();
+                }
+                if ui.button("Credentials").clicked() {
+                    self.show_credentials = true;
+                    self.reload_credentials();
                 }
                 if ui.button("Import Nodes").clicked() {
                     self.import_nodes();
@@ -409,6 +505,32 @@ impl NetworkMonitorApp {
                 });
             ui.end_row();
 
+            ui.label("SSH Credential:");
+            let selected_text = if let Some(ref cred_id) = form.credential_id {
+                // Find the credential name by ID
+                self.credentials
+                    .iter()
+                    .find(|c| c.id.to_string() == *cred_id)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| cred_id.clone())
+            } else {
+                "None (Use default SSH)".to_string()
+            };
+            egui::ComboBox::from_id_source("credential_combo")
+                .selected_text(selected_text)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut form.credential_id, None, "None (Use default SSH)");
+                    for credential in &self.credentials {
+                        let cred_id_str = credential.id.to_string();
+                        ui.selectable_value(
+                            &mut form.credential_id,
+                            Some(cred_id_str.clone()),
+                            &credential.name,
+                        );
+                    }
+                });
+            ui.end_row();
+
             match form.monitor_type {
                 MonitorTypeForm::Http => {
                     ui.label("URL:");
@@ -444,7 +566,7 @@ impl NetworkMonitorApp {
                     last_check: None,
                     response_time: None,
                     monitoring_interval: form.monitoring_interval.parse().unwrap_or(60),
-                    credential_id: None,
+                    credential_id: form.credential_id.clone(),
                 };
                 match self.database.add_node(&node) {
                     Ok(id) => {
@@ -484,6 +606,7 @@ impl NetworkMonitorApp {
                     node.name = form.name.clone();
                     node.detail = detail;
                     node.monitoring_interval = form.monitoring_interval.parse().unwrap_or(60);
+                    node.credential_id = form.credential_id.clone();
 
                     if let Err(e) = self.database.update_node(node) {
                         error!("Failed to update node in database: {}", e);
@@ -545,17 +668,173 @@ impl NetworkMonitorApp {
                 if let Some(node) = self.nodes.get(index) {
                     let target = node.detail.get_connection_target();
                     let connection_type = node.detail.get_connection_type();
-                    let strategy = create_connection_strategy(connection_type);
-                    let context = ConnectionContext::new(strategy);
 
-                    match context.connect(target) {
-                        Ok(_) => {
-                            info!("Successfully initiated connection to {}", target);
-                            self.set_status_message(format!("Connecting to {}...", target));
+                    match connection_type {
+                        crate::connection::ConnectionType::Http => {
+                            // HTTP hosts always open web browser, regardless of credentials
+                            let http_strategy = crate::connection::HttpConnectionStrategy;
+                            match http_strategy.connect(target) {
+                                Ok(_) => {
+                                    info!("Successfully opened {} in web browser", target);
+                                    self.set_status_message(format!(
+                                        "Opening {} in browser...",
+                                        target
+                                    ));
+                                }
+                                Err(e) => {
+                                    error!("Failed to open {} in browser: {}", target, e);
+                                    self.set_status_message(format!(
+                                        "Failed to open in browser: {}",
+                                        e
+                                    ));
+                                }
+                            }
                         }
-                        Err(e) => {
-                            error!("Failed to connect to {}: {}", target, e);
-                            self.set_status_message(format!("Failed to connect: {}", e));
+                        crate::connection::ConnectionType::Ping => {
+                            // ICMP/Ping hosts use SSH connection with credentials if available
+                            if let Some(ref credential_id) = node.credential_id {
+                                match self
+                                    .credential_store
+                                    .get_credential(&credential_id.parse().unwrap_or_default())
+                                {
+                                    Ok(Some(stored_credential)) => {
+                                        println!(
+                                            "Connecting to {} using credential: {}",
+                                            target, stored_credential.name
+                                        );
+                                        let ssh_strategy =
+                                            crate::connection::SshConnectionStrategy::new();
+                                        match ssh_strategy.connect_with_credentials(
+                                            target,
+                                            &stored_credential.credential,
+                                        ) {
+                                            Ok(_) => {
+                                                info!("Successfully initiated authenticated SSH connection to {}", target);
+                                                self.set_status_message(format!(
+                                                    "Connecting to {} with SSH credentials...",
+                                                    target
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to connect to {} with SSH credentials: {}", target, e);
+                                                self.set_status_message(format!(
+                                                    "Failed to connect with SSH credentials: {}",
+                                                    e
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        error!("Credential {} not found", credential_id);
+                                        self.set_status_message("Credential not found".to_string());
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            "Failed to retrieve credential {}: {}",
+                                            credential_id, e
+                                        );
+                                        self.set_status_message(format!(
+                                            "Failed to retrieve credential: {}",
+                                            e
+                                        ));
+                                    }
+                                }
+                            } else {
+                                // No credentials, use default SSH connection for ICMP hosts
+                                let ssh_strategy = crate::connection::SshConnectionStrategy::new();
+                                match ssh_strategy.connect(target) {
+                                    Ok(_) => {
+                                        info!(
+                                            "Successfully initiated SSH connection to {}",
+                                            target
+                                        );
+                                        self.set_status_message(format!(
+                                            "Connecting to {} via SSH...",
+                                            target
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to connect to {} via SSH: {}", target, e);
+                                        self.set_status_message(format!(
+                                            "Failed to connect via SSH: {}",
+                                            e
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        crate::connection::ConnectionType::Ssh => {
+                            // SSH hosts use SSH connection with credentials if available
+                            if let Some(ref credential_id) = node.credential_id {
+                                match self
+                                    .credential_store
+                                    .get_credential(&credential_id.parse().unwrap_or_default())
+                                {
+                                    Ok(Some(stored_credential)) => {
+                                        println!(
+                                            "Connecting to {} using credential: {}",
+                                            target, stored_credential.name
+                                        );
+                                        let ssh_strategy =
+                                            crate::connection::SshConnectionStrategy::new();
+                                        match ssh_strategy.connect_with_credentials(
+                                            target,
+                                            &stored_credential.credential,
+                                        ) {
+                                            Ok(_) => {
+                                                info!("Successfully initiated authenticated SSH connection to {}", target);
+                                                self.set_status_message(format!(
+                                                    "Connecting to {} with SSH credentials...",
+                                                    target
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to connect to {} with SSH credentials: {}", target, e);
+                                                self.set_status_message(format!(
+                                                    "Failed to connect with SSH credentials: {}",
+                                                    e
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        error!("Credential {} not found", credential_id);
+                                        self.set_status_message("Credential not found".to_string());
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            "Failed to retrieve credential {}: {}",
+                                            credential_id, e
+                                        );
+                                        self.set_status_message(format!(
+                                            "Failed to retrieve credential: {}",
+                                            e
+                                        ));
+                                    }
+                                }
+                            } else {
+                                // No credentials, use default SSH connection
+                                let ssh_strategy = crate::connection::SshConnectionStrategy::new();
+                                match ssh_strategy.connect(target) {
+                                    Ok(_) => {
+                                        info!(
+                                            "Successfully initiated SSH connection to {}",
+                                            target
+                                        );
+                                        self.set_status_message(format!(
+                                            "Connecting to {} via SSH...",
+                                            target
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to connect to {} via SSH: {}", target, e);
+                                        self.set_status_message(format!(
+                                            "Failed to connect via SSH: {}",
+                                            e
+                                        ));
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -900,12 +1179,421 @@ impl NetworkMonitorApp {
             self.set_status_message("Could not determine log file location".to_string());
         }
     }
+
+    fn show_credentials_window(&mut self, ctx: &egui::Context) {
+        if self.show_credentials {
+            let mut add_credential = false;
+            let mut refresh_credentials = false;
+            let mut show_credentials = self.show_credentials;
+
+            egui::Window::new("Credential Manager")
+                .resizable(true)
+                .default_width(600.0)
+                .default_height(400.0)
+                .open(&mut show_credentials)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Add New Credential").clicked() {
+                            add_credential = true;
+                        }
+                        ui.separator();
+                        if ui.button("Refresh").clicked() {
+                            refresh_credentials = true;
+                        }
+                    });
+
+                    ui.separator();
+
+                    // Show existing credentials
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::Grid::new("credentials_grid")
+                            .num_columns(4)
+                            .spacing([40.0, 4.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("Name").strong());
+                                ui.label(RichText::new("Description").strong());
+                                ui.label(RichText::new("Type").strong());
+                                ui.label(RichText::new("Actions").strong());
+                                ui.end_row();
+
+                                let mut delete_credential_id: Option<
+                                    crate::credentials::CredentialId,
+                                > = None;
+
+                                for credential in &self.credentials {
+                                    ui.label(&credential.name);
+                                    ui.label(credential.description.as_deref().unwrap_or(""));
+                                    ui.label(&credential.credential_type);
+
+                                    ui.horizontal(|ui| {
+                                        if ui.small_button("Edit").clicked() {
+                                            // TODO: Implement edit functionality
+                                        }
+                                        if ui.small_button("Delete").clicked() {
+                                            delete_credential_id = Some(credential.id.clone());
+                                        }
+                                    });
+                                    ui.end_row();
+                                }
+
+                                // Handle deletion after the loop
+                                if let Some(cred_id) = delete_credential_id {
+                                    self.pending_credential_action =
+                                        Some(CredentialAction::Delete(cred_id));
+                                }
+                            });
+                    });
+                });
+
+            // Update state after the window
+            self.show_credentials = show_credentials;
+            if add_credential {
+                self.show_add_credential = true;
+            }
+            if refresh_credentials {
+                self.reload_credentials();
+            }
+        }
+    }
+
+    fn show_add_credential_window(&mut self, ctx: &egui::Context) {
+        if self.show_add_credential {
+            let mut save_clicked = false;
+            let mut cancel_clicked = false;
+
+            egui::Window::new("Add New Credential")
+                .resizable(false)
+                .default_width(400.0)
+                .open(&mut self.show_add_credential)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut self.new_credential_form.name);
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Description:");
+                        ui.text_edit_singleline(&mut self.new_credential_form.description);
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Type:");
+                        egui::ComboBox::from_label("")
+                            .selected_text(format!(
+                                "{:?}",
+                                self.new_credential_form.credential_type
+                            ))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.new_credential_form.credential_type,
+                                    CredentialTypeForm::Default,
+                                    "Default",
+                                );
+                                ui.selectable_value(
+                                    &mut self.new_credential_form.credential_type,
+                                    CredentialTypeForm::Password,
+                                    "Password",
+                                );
+                                ui.selectable_value(
+                                    &mut self.new_credential_form.credential_type,
+                                    CredentialTypeForm::KeyFile,
+                                    "SSH Key File",
+                                );
+                                ui.selectable_value(
+                                    &mut self.new_credential_form.credential_type,
+                                    CredentialTypeForm::KeyData,
+                                    "SSH Key Data",
+                                );
+                            });
+                    });
+
+                    ui.separator();
+
+                    match self.new_credential_form.credential_type {
+                        CredentialTypeForm::Default => {
+                            ui.label("Uses system default SSH configuration");
+                        }
+                        CredentialTypeForm::Password => {
+                            ui.horizontal(|ui| {
+                                ui.label("Username:");
+                                ui.text_edit_singleline(&mut self.new_credential_form.username);
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Password:");
+                                ui.add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.new_credential_form.password,
+                                    )
+                                    .password(true),
+                                );
+                            });
+                        }
+                        CredentialTypeForm::KeyFile => {
+                            ui.horizontal(|ui| {
+                                ui.label("Username:");
+                                ui.text_edit_singleline(&mut self.new_credential_form.username);
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("SSH Key Path:");
+                                ui.text_edit_singleline(&mut self.new_credential_form.ssh_key_path);
+                                if ui.button("Browse").clicked() {
+                                    if let Some(path) = FileDialog::new()
+                                        .add_filter("SSH Keys", &["pem", "pub", "key"])
+                                        .pick_file()
+                                    {
+                                        self.new_credential_form.ssh_key_path =
+                                            path.to_string_lossy().to_string();
+                                    }
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Passphrase (optional):");
+                                ui.add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.new_credential_form.passphrase,
+                                    )
+                                    .password(true),
+                                );
+                            });
+                        }
+                        CredentialTypeForm::KeyData => {
+                            ui.horizontal(|ui| {
+                                ui.label("Username:");
+                                ui.text_edit_singleline(&mut self.new_credential_form.username);
+                            });
+                            ui.label("SSH Private Key Data:");
+                            ui.add(
+                                egui::TextEdit::multiline(
+                                    &mut self.new_credential_form.ssh_key_data,
+                                )
+                                .desired_rows(6),
+                            );
+                            ui.horizontal(|ui| {
+                                ui.label("Passphrase (optional):");
+                                ui.add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.new_credential_form.passphrase,
+                                    )
+                                    .password(true),
+                                );
+                            });
+                        }
+                    }
+
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Save").clicked() {
+                            save_clicked = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel_clicked = true;
+                        }
+                    });
+                });
+
+            // Handle actions after the window
+            if save_clicked {
+                self.prepare_save_credential();
+            }
+            if cancel_clicked {
+                self.show_add_credential = false;
+                self.reset_credential_form();
+            }
+        }
+    }
+
+    fn reload_credentials(&mut self) {
+        println!("Reloading credentials from store");
+        info!("Reloading credentials from store");
+        match self.credential_store.list_credentials() {
+            Ok(credentials) => {
+                println!("Loaded {} credentials", credentials.len());
+                for cred in &credentials {
+                    println!(
+                        "  - ID: {:?}, Name: {}, Type: {}",
+                        cred.id, cred.name, cred.credential_type
+                    );
+                }
+                info!("Loaded {} credentials", credentials.len());
+                self.credentials = credentials;
+            }
+            Err(e) => {
+                println!("Failed to reload credentials: {}", e);
+                self.set_status_message(format!("Failed to reload credentials: {}", e));
+                error!("Failed to reload credentials: {}", e);
+            }
+        }
+    }
+
+    fn prepare_save_credential(&mut self) {
+        println!(
+            "prepare_save_credential called with name: '{}'",
+            self.new_credential_form.name
+        );
+
+        if self.new_credential_form.name.trim().is_empty() {
+            println!("Credential name is empty, aborting");
+            self.set_status_message("Credential name cannot be empty".to_string());
+            return;
+        }
+
+        let credential = match self.new_credential_form.credential_type {
+            CredentialTypeForm::Default => SshCredential::Default,
+            CredentialTypeForm::Password => {
+                if self.new_credential_form.username.trim().is_empty()
+                    || self.new_credential_form.password.trim().is_empty()
+                {
+                    self.set_status_message("Username and password are required".to_string());
+                    return;
+                }
+                SshCredential::Password {
+                    username: self.new_credential_form.username.clone(),
+                    password: SensitiveString::new(self.new_credential_form.password.clone()),
+                }
+            }
+            CredentialTypeForm::KeyFile => {
+                if self.new_credential_form.username.trim().is_empty()
+                    || self.new_credential_form.ssh_key_path.trim().is_empty()
+                {
+                    self.set_status_message("Username and SSH key path are required".to_string());
+                    return;
+                }
+                SshCredential::Key {
+                    username: self.new_credential_form.username.clone(),
+                    private_key_path: PathBuf::from(&self.new_credential_form.ssh_key_path),
+                    passphrase: if self.new_credential_form.passphrase.trim().is_empty() {
+                        None
+                    } else {
+                        Some(SensitiveString::new(
+                            self.new_credential_form.passphrase.clone(),
+                        ))
+                    },
+                }
+            }
+            CredentialTypeForm::KeyData => {
+                if self.new_credential_form.username.trim().is_empty()
+                    || self.new_credential_form.ssh_key_data.trim().is_empty()
+                {
+                    self.set_status_message("Username and SSH key data are required".to_string());
+                    return;
+                }
+                SshCredential::KeyData {
+                    username: self.new_credential_form.username.clone(),
+                    private_key_data: SensitiveString::new(
+                        self.new_credential_form.ssh_key_data.clone(),
+                    ),
+                    passphrase: if self.new_credential_form.passphrase.trim().is_empty() {
+                        None
+                    } else {
+                        Some(SensitiveString::new(
+                            self.new_credential_form.passphrase.clone(),
+                        ))
+                    },
+                }
+            }
+        };
+
+        let description = if self.new_credential_form.description.trim().is_empty() {
+            None
+        } else {
+            Some(self.new_credential_form.description.clone())
+        };
+
+        println!(
+            "Creating pending save action for credential: {}",
+            self.new_credential_form.name
+        );
+
+        self.pending_credential_action = Some(CredentialAction::Save {
+            name: self.new_credential_form.name.clone(),
+            description,
+            credential,
+        });
+
+        println!("Closing credential form and resetting");
+        self.show_add_credential = false;
+        self.reset_credential_form();
+    }
+
+    fn reset_credential_form(&mut self) {
+        self.new_credential_form = CredentialForm {
+            name: String::new(),
+            description: String::new(),
+            credential_type: CredentialTypeForm::Default,
+            username: String::new(),
+            password: String::new(),
+            ssh_key_path: String::new(),
+            ssh_key_data: String::new(),
+            passphrase: String::new(),
+        };
+    }
+
+    fn process_pending_credential_action(&mut self) {
+        if let Some(action) = self.pending_credential_action.take() {
+            println!(
+                "Processing pending credential action: {:?}",
+                match &action {
+                    CredentialAction::Save { name, .. } => format!("Save({})", name),
+                    CredentialAction::Delete(id) => format!("Delete({:?})", id),
+                }
+            );
+
+            match action {
+                CredentialAction::Save {
+                    name,
+                    description,
+                    credential,
+                } => {
+                    println!("Attempting to save credential: {}", name);
+                    match self
+                        .credential_store
+                        .store_credential(name, description, credential)
+                    {
+                        Ok(id) => {
+                            println!("Credential saved successfully with ID: {:?}", id);
+                            self.set_status_message("Credential saved successfully".to_string());
+                            self.reload_credentials();
+                        }
+                        Err(e) => {
+                            println!("Failed to save credential: {}", e);
+                            self.set_status_message(format!("Failed to save credential: {}", e));
+                        }
+                    }
+                }
+                CredentialAction::Delete(id) => {
+                    println!("Attempting to delete credential: {:?}", id);
+                    match self.credential_store.delete_credential(&id) {
+                        Ok(_) => {
+                            println!("Credential deleted successfully");
+                            self.set_status_message("Credential deleted successfully".to_string());
+                            self.reload_credentials();
+                        }
+                        Err(e) => {
+                            println!("Failed to delete credential: {}", e);
+                            self.set_status_message(format!("Failed to delete credential: {}", e));
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 enum NodeAction {
     Edit(usize),
     Delete(usize),
     Connect(usize),
+}
+
+enum CredentialAction {
+    Save {
+        name: String,
+        description: Option<String>,
+        credential: SshCredential,
+    },
+    Delete(crate::credentials::CredentialId),
 }
 
 #[derive(Clone)]
