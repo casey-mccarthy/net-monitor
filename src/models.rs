@@ -1,3 +1,4 @@
+use crate::connection::ConnectionType;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -15,6 +16,24 @@ pub enum MonitorDetail {
         count: u32,
         timeout: u64,
     },
+}
+
+impl MonitorDetail {
+    /// Get the connection target for this monitor type
+    pub fn get_connection_target(&self) -> &str {
+        match self {
+            MonitorDetail::Http { url, .. } => url,
+            MonitorDetail::Ping { host, .. } => host,
+        }
+    }
+
+    /// Get the appropriate connection type for this monitor
+    pub fn get_connection_type(&self) -> ConnectionType {
+        match self {
+            MonitorDetail::Http { .. } => ConnectionType::Http,
+            MonitorDetail::Ping { .. } => ConnectionType::Ping,
+        }
+    }
 }
 
 impl fmt::Display for MonitorDetail {
@@ -190,7 +209,7 @@ mod tests {
 
         let serialized = serde_json::to_string(&node).unwrap();
         let deserialized: Node = serde_json::from_str(&serialized).unwrap();
-        
+
         // Note: We can't directly compare due to timestamp precision differences
         assert_eq!(deserialized.id, node.id);
         assert_eq!(deserialized.name, node.name);
@@ -246,7 +265,10 @@ mod tests {
         let serialized = serde_json::to_string(&node_import).unwrap();
         let deserialized: NodeImport = serde_json::from_str(&serialized).unwrap();
         assert_eq!(node_import.name, deserialized.name);
-        assert_eq!(node_import.monitoring_interval, deserialized.monitoring_interval);
+        assert_eq!(
+            node_import.monitoring_interval,
+            deserialized.monitoring_interval
+        );
     }
 
     #[test]
@@ -274,4 +296,4 @@ mod tests {
         assert_ne!(NodeStatus::Online, NodeStatus::Offline);
         assert_ne!(NodeStatus::Online, NodeStatus::Unknown);
     }
-} 
+}

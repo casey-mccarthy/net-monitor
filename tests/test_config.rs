@@ -37,67 +37,66 @@ impl TestEnvironment {
     /// Creates a test environment from environment variables
     pub fn from_env() -> Self {
         let mut env = Self::default();
-        
+
         // Check for environment variables to disable certain test types
         if let Ok(val) = env::var("NET_MONITOR_SKIP_NETWORK_TESTS") {
             if val == "1" || val.to_lowercase() == "true" {
                 env.run_network_tests = false;
             }
         }
-        
+
         if let Ok(val) = env::var("NET_MONITOR_SKIP_SLOW_TESTS") {
             if val == "1" || val.to_lowercase() == "true" {
                 env.run_slow_tests = false;
             }
         }
-        
+
         if let Ok(val) = env::var("NET_MONITOR_SKIP_INTEGRATION_TESTS") {
             if val == "1" || val.to_lowercase() == "true" {
                 env.run_integration_tests = false;
             }
         }
-        
+
         // Override timeouts if specified
         if let Ok(val) = env::var("NET_MONITOR_HTTP_TIMEOUT") {
             if let Ok(timeout) = val.parse() {
                 env.http_timeout = timeout;
             }
         }
-        
+
         if let Ok(val) = env::var("NET_MONITOR_PING_TIMEOUT") {
             if let Ok(timeout) = val.parse() {
                 env.ping_timeout = timeout;
             }
         }
-        
-        
+
         // Override test URLs/hosts if specified
         if let Ok(url) = env::var("NET_MONITOR_HTTP_TEST_URL") {
             env.http_test_url = url;
         }
-        
+
         if let Ok(host) = env::var("NET_MONITOR_PING_TEST_HOST") {
             env.ping_test_host = host;
         }
-        
+
         env
     }
-    
+
     /// Returns true if network tests should be run
     pub fn should_run_network_tests(&self) -> bool {
         self.run_network_tests
     }
-    
+
     /// Returns true if slow tests should be run
     pub fn should_run_slow_tests(&self) -> bool {
         self.run_slow_tests
     }
-    
+
     /// Returns true if integration tests should be run
     pub fn should_run_integration_tests(&self) -> bool {
         self.run_integration_tests
     }
-    
+
     /// Creates a CI-friendly test environment
     pub fn ci() -> Self {
         Self {
@@ -110,7 +109,7 @@ impl TestEnvironment {
             ping_test_host: "127.0.0.1".to_string(),
         }
     }
-    
+
     /// Creates a development test environment
     pub fn development() -> Self {
         Self {
@@ -159,7 +158,7 @@ impl TestConfig {
             max_concurrent_tests: 2,
         }
     }
-    
+
     /// Creates a test configuration for development
     pub fn development() -> Self {
         Self {
@@ -169,7 +168,7 @@ impl TestConfig {
             max_concurrent_tests: 8,
         }
     }
-    
+
     /// Creates a test configuration for fast tests only
     pub fn fast() -> Self {
         Self {
@@ -195,7 +194,7 @@ impl TestConfig {
     /// Creates a test configuration from environment variables
     pub fn from_env() -> Self {
         let mut config = Self::default();
-        
+
         // Override based on environment
         if let Ok(env) = env::var("NET_MONITOR_TEST_ENV") {
             match env.to_lowercase().as_str() {
@@ -205,14 +204,14 @@ impl TestConfig {
                 _ => {}
             }
         }
-        
+
         // Override concurrent test limit
         if let Ok(val) = env::var("NET_MONITOR_MAX_CONCURRENT_TESTS") {
             if let Ok(limit) = val.parse() {
                 config.max_concurrent_tests = limit;
             }
         }
-        
+
         config
     }
 }
@@ -264,4 +263,4 @@ mod tests {
         assert!(!config.environment.run_slow_tests);
         assert!(!config.environment.run_integration_tests);
     }
-} 
+}

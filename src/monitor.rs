@@ -9,10 +9,15 @@ pub async fn check_node(node: &Node) -> Result<MonitoringResult> {
     let start_time = std::time::Instant::now();
 
     let check_result = match &node.detail {
-        MonitorDetail::Http { url, expected_status } => {
-            check_http(url, *expected_status).await
-        }
-        MonitorDetail::Ping { host, count: _, timeout } => {
+        MonitorDetail::Http {
+            url,
+            expected_status,
+        } => check_http(url, *expected_status).await,
+        MonitorDetail::Ping {
+            host,
+            count: _,
+            timeout,
+        } => {
             // The `ping` crate doesn't support a `count` parameter in this function signature
             check_ping(host, *timeout).await
         }
@@ -42,17 +47,30 @@ async fn check_http(url: &str, expected_status: u16) -> Result<String> {
     if status.as_u16() == expected_status {
         Ok(format!("Responded with status {}", status))
     } else {
-        Err(anyhow!("Expected status {} but got {}", expected_status, status))
+        Err(anyhow!(
+            "Expected status {} but got {}",
+            expected_status,
+            status
+        ))
     }
 }
 
 async fn check_ping(host: &str, timeout: u64) -> Result<String> {
     info!("Checking Ping for {}", host);
-    let addr = host.parse::<std::net::IpAddr>().context("Invalid IP address")?;
+    let addr = host
+        .parse::<std::net::IpAddr>()
+        .context("Invalid IP address")?;
 
     // Use the `ping` function which is simpler and matches the older API.
     // The `count` parameter is not supported in this version's `ping` function.
-    match ping::ping(addr, Some(Duration::from_secs(timeout)), None, None, None, None) {
+    match ping::ping(
+        addr,
+        Some(Duration::from_secs(timeout)),
+        None,
+        None,
+        None,
+        None,
+    ) {
         Ok(_) => Ok("Ping successful".to_string()),
         Err(e) => Err(anyhow!("Ping failed: {}", e)),
     }
@@ -84,7 +102,7 @@ mod tests {
     async fn test_check_node_http_success() {
         let node = create_test_http_node();
         let result = check_node(&node).await;
-        
+
         assert!(result.is_ok());
         let monitoring_result = result.unwrap();
         assert_eq!(monitoring_result.node_id, 1);
@@ -109,7 +127,7 @@ mod tests {
         };
 
         let result = check_node(&node).await;
-        
+
         assert!(result.is_ok());
         let monitoring_result = result.unwrap();
         assert_eq!(monitoring_result.node_id, 1);
@@ -134,7 +152,7 @@ mod tests {
         };
 
         let result = check_node(&node).await;
-        
+
         assert!(result.is_ok());
         let monitoring_result = result.unwrap();
         assert_eq!(monitoring_result.node_id, 1);
@@ -156,7 +174,9 @@ mod tests {
         let result = check_http("https://httpbin.org/status/200", 404).await;
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(error.to_string().contains("Expected status 404 but got 200"));
+        assert!(error
+            .to_string()
+            .contains("Expected status 404 but got 200"));
     }
 
     #[tokio::test]
@@ -187,7 +207,6 @@ mod tests {
         assert!(error.to_string().contains("Invalid IP address"));
     }
 
-
     #[test]
     fn test_monitoring_result_structure() {
         let node = create_test_http_node();
@@ -206,7 +225,7 @@ mod tests {
     async fn test_check_node_with_none_id() {
         let mut node = create_test_http_node();
         node.id = None;
-        
+
         let result = check_node(&node).await;
         assert!(result.is_ok());
         let monitoring_result = result.unwrap();
@@ -220,7 +239,10 @@ mod tests {
             expected_status: 200,
         };
         match http_detail {
-            MonitorDetail::Http { url, expected_status } => {
+            MonitorDetail::Http {
+                url,
+                expected_status,
+            } => {
                 assert_eq!(url, "https://example.com");
                 assert_eq!(expected_status, 200);
             }
@@ -233,7 +255,11 @@ mod tests {
             timeout: 5,
         };
         match ping_detail {
-            MonitorDetail::Ping { host, count, timeout } => {
+            MonitorDetail::Ping {
+                host,
+                count,
+                timeout,
+            } => {
                 assert_eq!(host, "192.168.1.1");
                 assert_eq!(count, 4);
                 assert_eq!(timeout, 5);
@@ -241,4 +267,4 @@ mod tests {
             _ => panic!("Expected Ping variant"),
         }
     }
-} 
+}

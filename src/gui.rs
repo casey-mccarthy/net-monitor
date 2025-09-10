@@ -1,19 +1,18 @@
+use crate::connection::{create_connection_strategy, ConnectionContext};
 use crate::database::Database;
 use crate::models::{MonitorDetail, Node, NodeImport, NodeStatus};
 use crate::monitor::check_node;
 use anyhow::Result;
-use chrono;
+use directories::ProjectDirs;
 use eframe::egui::{self, Color32, Context, Grid, RichText, ScrollArea, Ui, Window};
 use rfd::FileDialog;
 use std::collections::HashMap;
 use std::fmt;
+use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
-use std::process::Command;
 use tracing::{error, info};
-use tokio;
-use directories::ProjectDirs;
 
 #[derive(Clone, Copy, PartialEq)]
 enum MonitorTypeForm {
@@ -76,17 +75,26 @@ impl NodeForm {
     }
 
     fn from_node(node: &Node) -> Self {
-        let mut form = Self::default();
-        form.name = node.name.clone();
-        form.monitoring_interval = node.monitoring_interval.to_string();
+        let mut form = Self {
+            name: node.name.clone(),
+            monitoring_interval: node.monitoring_interval.to_string(),
+            ..Default::default()
+        };
 
         match &node.detail {
-            MonitorDetail::Http { url, expected_status } => {
+            MonitorDetail::Http {
+                url,
+                expected_status,
+            } => {
                 form.monitor_type = MonitorTypeForm::Http;
                 form.http_url = url.clone();
                 form.http_expected_status = expected_status.to_string();
             }
-            MonitorDetail::Ping { host, count, timeout } => {
+            MonitorDetail::Ping {
+                host,
+                count,
+                timeout,
+            } => {
                 form.monitor_type = MonitorTypeForm::Ping;
                 form.ping_host = host.clone();
                 form.ping_count = count.to_string();
@@ -144,7 +152,7 @@ impl eframe::App for NetworkMonitorApp {
                 self.status_message = None;
             }
         }
-        
+
         while let Ok(updated_node) = self.update_rx.try_recv() {
             if let Some(node) = self.nodes.iter_mut().find(|n| n.id == updated_node.id) {
                 if let Some(node_id) = updated_node.id {
@@ -153,10 +161,11 @@ impl eframe::App for NetworkMonitorApp {
                 *node = updated_node;
             }
         }
-        
+
         // Clean up old flash animations (older than 1 second)
         let now = Instant::now();
-        self.updated_nodes.retain(|_, timestamp| now.duration_since(*timestamp).as_millis() < 1000);
+        self.updated_nodes
+            .retain(|_, timestamp| now.duration_since(*timestamp).as_millis() < 1000);
 
         self.show_main_window(ctx);
         self.show_add_node_window(ctx);
@@ -200,7 +209,7 @@ impl NetworkMonitorApp {
         let mut action = None;
         ScrollArea::vertical().show(ui, |ui| {
             Grid::new("node_list")
-                .num_columns(6)
+                .num_columns(7)
                 .spacing([20.0, 10.0])
                 .striped(true)
                 .show(ui, |ui| {
@@ -209,6 +218,7 @@ impl NetworkMonitorApp {
                     ui.label(RichText::new("Type").strong());
                     ui.label(RichText::new("Status").strong());
                     ui.label(RichText::new("Last Check").strong());
+                    ui.label(RichText::new("Connect").strong());
                     ui.label(RichText::new("Actions").strong());
                     ui.end_row();
 
@@ -216,7 +226,8 @@ impl NetworkMonitorApp {
                         // Check if this node was recently updated for flash effect
                         let flash_intensity = if let Some(node_id) = node.id {
                             if let Some(update_time) = self.updated_nodes.get(&node_id) {
-                                let elapsed = Instant::now().duration_since(*update_time).as_millis();
+                                let elapsed =
+                                    Instant::now().duration_since(*update_time).as_millis();
                                 if elapsed < 500 {
                                     // Fade from 1.0 to 0.0 over 500ms
                                     1.0 - (elapsed as f32 / 500.0)
@@ -229,7 +240,7 @@ impl NetworkMonitorApp {
                         } else {
                             0.0
                         };
-                        
+
                         ui.label(&node.name);
                         let target = match &node.detail {
                             MonitorDetail::Http { url, .. } => url.as_str(),
@@ -243,35 +254,38 @@ impl NetworkMonitorApp {
                             NodeStatus::Unknown => Color32::YELLOW,
                         };
                         ui.colored_label(status_color, node.status.to_string());
-                        
+
                         // Last check with glow effect
                         let last_check_str = node
                             .last_check
-                            .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S").to_string())
+                            .map(|t| {
+                                t.with_timezone(&chrono::Local)
+                                    .format("%Y-%m-%d %H:%M:%S")
+                                    .to_string()
+                            })
                             .unwrap_or_else(|| "Never".to_string());
-                        
+
                         if flash_intensity > 0.0 {
                             // Create a glowing effect by rendering the text multiple times with different alphas
-                            let response = ui.allocate_response(
-                                ui.available_size(),
-                                egui::Sense::hover()
-                            );
+                            let response =
+                                ui.allocate_response(ui.available_size(), egui::Sense::hover());
                             let text_pos = response.rect.min;
                             let painter = ui.painter();
                             let font_id = egui::TextStyle::Body.resolve(ui.style());
-                            
+
                             // Draw multiple layers for glow effect
                             let glow_layers = [
-                                (3.0, 0.02),  // Outermost, most faded
+                                (3.0, 0.02), // Outermost, most faded
                                 (2.0, 0.04),
                                 (1.0, 0.06),
                                 (0.5, 0.08),
                             ];
-                            
+
                             for (offset, alpha_multiplier) in glow_layers.iter() {
                                 let glow_alpha = (flash_intensity * alpha_multiplier * 255.0) as u8;
-                                let glow_color = Color32::from_rgba_unmultiplied(255, 255, 255, glow_alpha);
-                                
+                                let glow_color =
+                                    Color32::from_rgba_unmultiplied(255, 255, 255, glow_alpha);
+
                                 // Draw glow in multiple directions for radial effect
                                 let offsets = [
                                     egui::Vec2::new(*offset, 0.0),
@@ -283,7 +297,7 @@ impl NetworkMonitorApp {
                                     egui::Vec2::new(*offset * 0.7, -*offset * 0.7),
                                     egui::Vec2::new(-*offset * 0.7, -*offset * 0.7),
                                 ];
-                                
+
                                 for offset_vec in offsets.iter() {
                                     painter.text(
                                         text_pos + *offset_vec,
@@ -294,7 +308,7 @@ impl NetworkMonitorApp {
                                     );
                                 }
                             }
-                            
+
                             // Draw the main text on top
                             painter.text(
                                 text_pos,
@@ -306,7 +320,12 @@ impl NetworkMonitorApp {
                         } else {
                             ui.label(last_check_str);
                         }
-                        
+
+                        // Connect button
+                        if ui.button("Connect").clicked() {
+                            action = Some(NodeAction::Connect(i));
+                        }
+
                         ui.horizontal(|ui| {
                             if ui.button("Edit").clicked() {
                                 action = Some(NodeAction::Edit(i));
@@ -430,14 +449,17 @@ impl NetworkMonitorApp {
                     Ok(id) => {
                         let mut new_node = node;
                         new_node.id = Some(id);
-                        
+
                         // Send update to monitoring thread if it's running
                         if let Some(handle) = &self.monitoring_handle {
-                            if let Err(e) = handle.config_tx.send(NodeConfigUpdate::Add(new_node.clone())) {
+                            if let Err(e) = handle
+                                .config_tx
+                                .send(NodeConfigUpdate::Add(new_node.clone()))
+                            {
                                 error!("Failed to send node addition to monitoring thread: {}", e);
                             }
                         }
-                        
+
                         self.nodes.push(new_node);
                         self.set_status_message("Node added successfully".to_string());
                     }
@@ -453,7 +475,7 @@ impl NetworkMonitorApp {
             }
         }
     }
-    
+
     fn update_node_from_form(&mut self, node_id: i64, form: &NodeForm) {
         match form.to_node_detail() {
             Ok(detail) => {
@@ -461,14 +483,17 @@ impl NetworkMonitorApp {
                     node.name = form.name.clone();
                     node.detail = detail;
                     node.monitoring_interval = form.monitoring_interval.parse().unwrap_or(60);
-                    
+
                     if let Err(e) = self.database.update_node(node) {
                         error!("Failed to update node in database: {}", e);
                         self.set_status_message(format!("Error updating node: {}", e));
                     } else {
                         // Send update to monitoring thread if it's running
                         if let Some(handle) = &self.monitoring_handle {
-                            if let Err(e) = handle.config_tx.send(NodeConfigUpdate::Update(node.clone())) {
+                            if let Err(e) = handle
+                                .config_tx
+                                .send(NodeConfigUpdate::Update(node.clone()))
+                            {
                                 error!("Failed to send node update to monitoring thread: {}", e);
                             }
                         }
@@ -499,8 +524,12 @@ impl NetworkMonitorApp {
                         if self.database.delete_node(id).is_ok() {
                             // Send update to monitoring thread if it's running
                             if let Some(handle) = &self.monitoring_handle {
-                                if let Err(e) = handle.config_tx.send(NodeConfigUpdate::Delete(id)) {
-                                    error!("Failed to send node deletion to monitoring thread: {}", e);
+                                if let Err(e) = handle.config_tx.send(NodeConfigUpdate::Delete(id))
+                                {
+                                    error!(
+                                        "Failed to send node deletion to monitoring thread: {}",
+                                        e
+                                    );
                                 }
                             }
                             self.nodes.remove(index);
@@ -511,18 +540,38 @@ impl NetworkMonitorApp {
                     }
                 }
             }
+            NodeAction::Connect(index) => {
+                if let Some(node) = self.nodes.get(index) {
+                    let target = node.detail.get_connection_target();
+                    let connection_type = node.detail.get_connection_type();
+                    let strategy = create_connection_strategy(connection_type);
+                    let context = ConnectionContext::new(strategy);
+
+                    match context.connect(target) {
+                        Ok(_) => {
+                            info!("Successfully initiated connection to {}", target);
+                            self.set_status_message(format!("Connecting to {}...", target));
+                        }
+                        Err(e) => {
+                            error!("Failed to connect to {}: {}", target, e);
+                            self.set_status_message(format!("Failed to connect: {}", e));
+                        }
+                    }
+                }
+            }
         }
     }
-    
+
     fn monitoring_toggle_button(&mut self, ui: &mut Ui) {
         if self.monitoring_handle.is_some() {
-            if ui.button(RichText::new("Stop Monitoring").color(Color32::RED)).clicked() {
+            if ui
+                .button(RichText::new("Stop Monitoring").color(Color32::RED))
+                .clicked()
+            {
                 self.stop_monitoring();
             }
-        } else {
-            if ui.button("Start Monitoring").clicked() {
-                self.start_monitoring();
-            }
+        } else if ui.button("Start Monitoring").clicked() {
+            self.start_monitoring();
         }
     }
 
@@ -532,7 +581,7 @@ impl NetworkMonitorApp {
         let (config_tx, config_rx) = mpsc::channel();
         let db = self.database.clone();
         let update_tx = self.update_tx.clone();
-        
+
         let initial_nodes = self.nodes.clone();
 
         let thread = thread::spawn(move || {
@@ -553,17 +602,19 @@ impl NetworkMonitorApp {
                         }
                         NodeConfigUpdate::Update(updated_node) => {
                             info!("Updating node configuration: {}", updated_node.name);
-                            if let Some(node) = current_nodes.iter_mut().find(|n| n.id == updated_node.id) {
+                            if let Some(node) =
+                                current_nodes.iter_mut().find(|n| n.id == updated_node.id)
+                            {
                                 // Preserve the current status and last check time
-                                let status = node.status.clone();
+                                let status = node.status;
                                 let last_check = node.last_check;
                                 let response_time = node.response_time;
-                                
+
                                 *node = updated_node;
                                 node.status = status;
                                 node.last_check = last_check;
                                 node.response_time = response_time;
-                                
+
                                 // Reset the check timer if monitoring interval changed
                                 if let Some(node_id) = node.id {
                                     last_check_times.remove(&node_id);
@@ -578,28 +629,30 @@ impl NetworkMonitorApp {
                         }
                     }
                 }
-                
+
                 let mut nodes_to_check = current_nodes.clone();
 
                 for node in &mut nodes_to_check {
                     let node_id = node.id.unwrap_or(0);
-                    if node_id == 0 { continue; }
+                    if node_id == 0 {
+                        continue;
+                    }
 
                     let now = Instant::now();
 
-                    let should_check = last_check_times.get(&node_id).map_or(true, |last_check| {
+                    let should_check = last_check_times.get(&node_id).is_none_or(|last_check| {
                         now.duration_since(*last_check).as_secs() >= node.monitoring_interval
                     });
 
                     if should_check {
                         last_check_times.insert(node_id, now);
                         let previous_status = previous_statuses.get(&node_id).cloned();
-                        let result = runtime.block_on(check_node(&node));
+                        let result = runtime.block_on(check_node(node));
 
                         match result {
                             Ok(mut check_result) => {
                                 let new_status = check_result.status;
-                                
+
                                 // Log the check result with status
                                 match new_status {
                                     NodeStatus::Online => {
@@ -612,51 +665,71 @@ impl NetworkMonitorApp {
                                         info!("Node '{}' checked - Status: UNKNOWN", node.name);
                                     }
                                 }
-                                
+
                                 // Log status changes
                                 if let Some(prev_status) = previous_status {
                                     if prev_status != new_status {
                                         match (prev_status, new_status) {
                                             (NodeStatus::Online, NodeStatus::Offline) => {
-                                                error!("ALERT: Node '{}' went DOWN (was UP)", node.name);
+                                                error!(
+                                                    "ALERT: Node '{}' went DOWN (was UP)",
+                                                    node.name
+                                                );
                                             }
                                             (NodeStatus::Offline, NodeStatus::Online) => {
-                                                info!("RECOVERY: Node '{}' is back UP (was DOWN)", node.name);
+                                                info!(
+                                                    "RECOVERY: Node '{}' is back UP (was DOWN)",
+                                                    node.name
+                                                );
                                             }
                                             (NodeStatus::Unknown, NodeStatus::Online) => {
-                                                info!("Node '{}' is now UP (was UNKNOWN)", node.name);
+                                                info!(
+                                                    "Node '{}' is now UP (was UNKNOWN)",
+                                                    node.name
+                                                );
                                             }
                                             (NodeStatus::Unknown, NodeStatus::Offline) => {
-                                                error!("Node '{}' is now DOWN (was UNKNOWN)", node.name);
+                                                error!(
+                                                    "Node '{}' is now DOWN (was UNKNOWN)",
+                                                    node.name
+                                                );
                                             }
                                             (NodeStatus::Online, NodeStatus::Unknown) => {
-                                                error!("Node '{}' status is now UNKNOWN (was UP)", node.name);
+                                                error!(
+                                                    "Node '{}' status is now UNKNOWN (was UP)",
+                                                    node.name
+                                                );
                                             }
                                             (NodeStatus::Offline, NodeStatus::Unknown) => {
-                                                error!("Node '{}' status is now UNKNOWN (was DOWN)", node.name);
+                                                error!(
+                                                    "Node '{}' status is now UNKNOWN (was DOWN)",
+                                                    node.name
+                                                );
                                             }
                                             _ => {}
                                         }
                                     }
                                 }
-                                
+
                                 // Update the previous status tracking
                                 previous_statuses.insert(node_id, new_status);
-                                
+
                                 node.status = check_result.status;
                                 node.last_check = Some(check_result.timestamp);
                                 node.response_time = check_result.response_time;
                                 check_result.node_id = node_id;
 
-                                if let Err(e) = db.update_node(&node) {
+                                if let Err(e) = db.update_node(node) {
                                     error!("Failed to update node status: {}", e);
                                 }
                                 if let Err(e) = db.add_monitoring_result(&check_result) {
                                     error!("Failed to save monitoring result: {}", e);
                                 }
-                                
+
                                 if update_tx.send(node.clone()).is_err() {
-                                    info!("Main thread receiver disconnected. Shutting down monitor.");
+                                    info!(
+                                        "Main thread receiver disconnected. Shutting down monitor."
+                                    );
                                     break;
                                 }
                             }
@@ -666,7 +739,7 @@ impl NetworkMonitorApp {
                         }
                     }
                 }
-                
+
                 // Check for stop signal
                 match stop_rx.recv_timeout(Duration::from_secs(1)) {
                     Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -678,7 +751,11 @@ impl NetworkMonitorApp {
             }
         });
 
-        self.monitoring_handle = Some(MonitoringHandle { stop_tx, config_tx, thread });
+        self.monitoring_handle = Some(MonitoringHandle {
+            stop_tx,
+            config_tx,
+            thread,
+        });
         self.set_status_message("Monitoring started".to_string());
     }
 
@@ -715,16 +792,19 @@ impl NetworkMonitorApp {
                                 count += 1;
                             }
                         }
-                        
+
                         // Send all imported nodes to monitoring thread if it's running
                         if let Some(handle) = &self.monitoring_handle {
                             for node in added_nodes {
                                 if let Err(e) = handle.config_tx.send(NodeConfigUpdate::Add(node)) {
-                                    error!("Failed to send imported node to monitoring thread: {}", e);
+                                    error!(
+                                        "Failed to send imported node to monitoring thread: {}",
+                                        e
+                                    );
                                 }
                             }
                         }
-                        
+
                         self.set_status_message(format!("Imported {} nodes", count));
                         self.reload_nodes();
                     }
@@ -741,11 +821,15 @@ impl NetworkMonitorApp {
 
     fn export_nodes(&mut self) {
         if let Some(path) = FileDialog::new().add_filter("JSON", &["json"]).save_file() {
-            let nodes_to_export: Vec<NodeImport> = self.nodes.iter().map(|node| NodeImport {
-                name: node.name.clone(),
-                detail: node.detail.clone(),
-                monitoring_interval: node.monitoring_interval,
-            }).collect();
+            let nodes_to_export: Vec<NodeImport> = self
+                .nodes
+                .iter()
+                .map(|node| NodeImport {
+                    name: node.name.clone(),
+                    detail: node.detail.clone(),
+                    monitoring_interval: node.monitoring_interval,
+                })
+                .collect();
 
             match serde_json::to_string_pretty(&nodes_to_export) {
                 Ok(data) => {
@@ -771,7 +855,7 @@ impl NetworkMonitorApp {
             }
         }
     }
-    
+
     fn set_status_message(&mut self, message: String) {
         info!("Status: {}", message);
         self.status_message = Some((message, self.get_current_time()));
@@ -780,11 +864,11 @@ impl NetworkMonitorApp {
     fn get_current_time(&self) -> f64 {
         chrono::Utc::now().timestamp() as f64
     }
-    
+
     fn open_log_file(&mut self) {
         if let Some(proj_dirs) = ProjectDirs::from("com", "casey", "net-monitor") {
             let log_file = proj_dirs.data_dir().join("net-monitor.log");
-            
+
             if log_file.exists() {
                 #[cfg(target_os = "windows")]
                 {
@@ -792,14 +876,14 @@ impl NetworkMonitorApp {
                         self.set_status_message(format!("Failed to open log file: {}", e));
                     }
                 }
-                
+
                 #[cfg(target_os = "macos")]
                 {
                     if let Err(e) = Command::new("open").arg(&log_file).spawn() {
                         self.set_status_message(format!("Failed to open log file: {}", e));
                     }
                 }
-                
+
                 #[cfg(target_os = "linux")]
                 {
                     if let Err(e) = Command::new("xdg-open").arg(&log_file).spawn() {
@@ -818,6 +902,7 @@ impl NetworkMonitorApp {
 enum NodeAction {
     Edit(usize),
     Delete(usize),
+    Connect(usize),
 }
 
 #[derive(Clone)]
@@ -825,4 +910,4 @@ enum NodeConfigUpdate {
     Add(Node),
     Update(Node),
     Delete(i64),
-} 
+}

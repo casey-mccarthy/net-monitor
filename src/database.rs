@@ -63,14 +63,8 @@ impl Database {
     /// Adds a new node to the database
     pub fn add_node(&self, node: &Node) -> Result<i64> {
         let conn = self.get_connection()?;
-        let (
-            monitor_type,
-            http_url,
-            http_expected_status,
-            ping_host,
-            ping_count,
-            ping_timeout,
-        ) = node.detail.to_db_params();
+        let (monitor_type, http_url, http_expected_status, ping_host, ping_count, ping_timeout) =
+            node.detail.to_db_params();
 
         let status_str = node.status.to_string();
 
@@ -99,15 +93,9 @@ impl Database {
     /// Updates an existing node in the database
     pub fn update_node(&self, node: &Node) -> Result<()> {
         let conn = self.get_connection()?;
-        let (
-            monitor_type,
-            http_url,
-            http_expected_status,
-            ping_host,
-            ping_count,
-            ping_timeout,
-        ) = node.detail.to_db_params();
-        
+        let (monitor_type, http_url, http_expected_status, ping_host, ping_count, ping_timeout) =
+            node.detail.to_db_params();
+
         let status_str = node.status.to_string();
 
         conn.execute(
@@ -143,7 +131,9 @@ impl Database {
              FROM nodes ORDER BY name",
         )?;
         let nodes = stmt.query_map([], |row| self.row_to_node(row))?;
-        nodes.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+        nodes
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     /// Deletes a node from the database
@@ -194,13 +184,39 @@ impl Database {
 }
 
 impl MonitorDetail {
-    fn to_db_params(&self) -> (&'static str, Option<String>, Option<u16>, Option<String>, Option<u32>, Option<u64>) {
+    fn to_db_params(
+        &self,
+    ) -> (
+        &'static str,
+        Option<String>,
+        Option<u16>,
+        Option<String>,
+        Option<u32>,
+        Option<u64>,
+    ) {
         match self {
-            MonitorDetail::Http { url, expected_status } => (
-                "http", Some(url.clone()), Some(*expected_status), None, None, None
+            MonitorDetail::Http {
+                url,
+                expected_status,
+            } => (
+                "http",
+                Some(url.clone()),
+                Some(*expected_status),
+                None,
+                None,
+                None,
             ),
-            MonitorDetail::Ping { host, count, timeout } => (
-                "ping", None, None, Some(host.clone()), Some(*count), Some(*timeout)
+            MonitorDetail::Ping {
+                host,
+                count,
+                timeout,
+            } => (
+                "ping",
+                None,
+                None,
+                Some(host.clone()),
+                Some(*count),
+                Some(*timeout),
             ),
         }
     }
@@ -217,7 +233,11 @@ impl MonitorDetail {
                 count: row.get("ping_count")?,
                 timeout: row.get("ping_timeout")?,
             }),
-            _ => Err(rusqlite::Error::InvalidColumnType(0, "monitor_type".to_string(), rusqlite::types::Type::Text)),
+            _ => Err(rusqlite::Error::InvalidColumnType(
+                0,
+                "monitor_type".to_string(),
+                rusqlite::types::Type::Text,
+            )),
         }
     }
 }
@@ -281,7 +301,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn test_database_creation() {
         let (db, temp_file) = create_test_database();
@@ -294,26 +313,30 @@ mod tests {
     fn test_add_and_get_http_node() {
         let (db, temp_file) = create_test_database();
         let node = create_test_http_node();
-        
+
         let id = db.add_node(&node).unwrap();
         assert!(id > 0);
-        
+
         let nodes = db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
-        
+
         let retrieved_node = &nodes[0];
         assert_eq!(retrieved_node.id, Some(id));
         assert_eq!(retrieved_node.name, "Test HTTP Node");
         assert_eq!(retrieved_node.status, NodeStatus::Online);
         assert_eq!(retrieved_node.monitoring_interval, 60);
-        
-        if let MonitorDetail::Http { url, expected_status } = &retrieved_node.detail {
+
+        if let MonitorDetail::Http {
+            url,
+            expected_status,
+        } = &retrieved_node.detail
+        {
             assert_eq!(url, "https://example.com");
             assert_eq!(*expected_status, 200);
         } else {
             panic!("Expected HTTP monitor detail");
         }
-        
+
         drop(db);
         fs::remove_file(temp_file.path()).unwrap();
     }
@@ -322,51 +345,55 @@ mod tests {
     fn test_add_and_get_ping_node() {
         let (db, temp_file) = create_test_database();
         let node = create_test_ping_node();
-        
+
         let id = db.add_node(&node).unwrap();
         assert!(id > 0);
-        
+
         let nodes = db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
-        
+
         let retrieved_node = &nodes[0];
         assert_eq!(retrieved_node.id, Some(id));
         assert_eq!(retrieved_node.name, "Test Ping Node");
         assert_eq!(retrieved_node.status, NodeStatus::Offline);
         assert_eq!(retrieved_node.monitoring_interval, 30);
-        
-        if let MonitorDetail::Ping { host, count, timeout } = &retrieved_node.detail {
+
+        if let MonitorDetail::Ping {
+            host,
+            count,
+            timeout,
+        } = &retrieved_node.detail
+        {
             assert_eq!(host, "192.168.1.1");
             assert_eq!(*count, 4);
             assert_eq!(*timeout, 5);
         } else {
             panic!("Expected Ping monitor detail");
         }
-        
+
         drop(db);
         fs::remove_file(temp_file.path()).unwrap();
     }
-
 
     #[test]
     fn test_update_node() {
         let (db, temp_file) = create_test_database();
         let mut node = create_test_http_node();
-        
+
         let id = db.add_node(&node).unwrap();
         node.id = Some(id);
         node.name = "Updated HTTP Node".to_string();
         node.status = NodeStatus::Offline;
-        
+
         db.update_node(&node).unwrap();
-        
+
         let nodes = db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
-        
+
         let retrieved_node = &nodes[0];
         assert_eq!(retrieved_node.name, "Updated HTTP Node");
         assert_eq!(retrieved_node.status, NodeStatus::Offline);
-        
+
         drop(db);
         fs::remove_file(temp_file.path()).unwrap();
     }
@@ -375,17 +402,17 @@ mod tests {
     fn test_delete_node() {
         let (db, temp_file) = create_test_database();
         let node = create_test_http_node();
-        
+
         let id = db.add_node(&node).unwrap();
-        
+
         let nodes = db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
-        
+
         db.delete_node(id).unwrap();
-        
+
         let nodes = db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 0);
-        
+
         drop(db);
         fs::remove_file(temp_file.path()).unwrap();
     }
@@ -395,7 +422,7 @@ mod tests {
         let (db, temp_file) = create_test_database();
         let node = create_test_http_node();
         let node_id = db.add_node(&node).unwrap();
-        
+
         let result = MonitoringResult {
             id: None,
             node_id,
@@ -404,10 +431,10 @@ mod tests {
             response_time: Some(150),
             details: Some("Success".to_string()),
         };
-        
+
         let result_id = db.add_monitoring_result(&result).unwrap();
         assert!(result_id > 0);
-        
+
         drop(db);
         fs::remove_file(temp_file.path()).unwrap();
     }
@@ -415,20 +442,20 @@ mod tests {
     #[test]
     fn test_multiple_nodes() {
         let (db, temp_file) = create_test_database();
-        
+
         let http_node = create_test_http_node();
         let ping_node = create_test_ping_node();
-        
+
         db.add_node(&http_node).unwrap();
         db.add_node(&ping_node).unwrap();
-        
+
         let nodes = db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 2);
-        
+
         // Check that nodes are ordered by name
         assert_eq!(nodes[0].name, "Test HTTP Node");
         assert_eq!(nodes[1].name, "Test Ping Node");
-        
+
         drop(db);
         fs::remove_file(temp_file.path()).unwrap();
     }
@@ -436,9 +463,18 @@ mod tests {
     #[test]
     fn test_node_status_parsing() {
         assert_eq!("Online".parse::<NodeStatus>().unwrap(), NodeStatus::Online);
-        assert_eq!("Offline".parse::<NodeStatus>().unwrap(), NodeStatus::Offline);
-        assert_eq!("Unknown".parse::<NodeStatus>().unwrap(), NodeStatus::Unknown);
-        assert_eq!("Invalid".parse::<NodeStatus>().unwrap(), NodeStatus::Unknown);
+        assert_eq!(
+            "Offline".parse::<NodeStatus>().unwrap(),
+            NodeStatus::Offline
+        );
+        assert_eq!(
+            "Unknown".parse::<NodeStatus>().unwrap(),
+            NodeStatus::Unknown
+        );
+        assert_eq!(
+            "Invalid".parse::<NodeStatus>().unwrap(),
+            NodeStatus::Unknown
+        );
     }
 
     #[test]
@@ -451,7 +487,7 @@ mod tests {
         assert_eq!(params.0, "http");
         assert_eq!(params.1, Some("https://example.com".to_string()));
         assert_eq!(params.2, Some(200));
-        
+
         let ping_detail = MonitorDetail::Ping {
             host: "192.168.1.1".to_string(),
             count: 4,
@@ -462,7 +498,6 @@ mod tests {
         assert_eq!(params.3, Some("192.168.1.1".to_string()));
         assert_eq!(params.4, Some(4));
         assert_eq!(params.5, Some(5));
-        
     }
 
     #[test]
@@ -470,13 +505,13 @@ mod tests {
         let (db, temp_file) = create_test_database();
         let mut node = create_test_http_node();
         node.response_time = Some(250);
-        
+
         let _id = db.add_node(&node).unwrap();
-        
+
         let nodes = db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].response_time, Some(250));
-        
+
         drop(db);
         fs::remove_file(temp_file.path()).unwrap();
     }
@@ -487,17 +522,17 @@ mod tests {
         let mut node = create_test_http_node();
         let now = Utc::now();
         node.last_check = Some(now);
-        
+
         let _id = db.add_node(&node).unwrap();
-        
+
         let nodes = db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
         assert!(nodes[0].last_check.is_some());
         // Allow for small time differences due to database operations
         let time_diff = (nodes[0].last_check.unwrap() - now).num_seconds().abs();
         assert!(time_diff < 5);
-        
+
         drop(db);
         fs::remove_file(temp_file.path()).unwrap();
     }
-} 
+}
