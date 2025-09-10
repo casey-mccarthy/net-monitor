@@ -285,35 +285,41 @@ impl NetworkMonitorApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Network Monitor");
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui.button("Add Node").clicked() {
-                    self.show_add_node = true;
-                    self.new_node_form = NodeForm::default();
-                }
-                if ui.button("Credentials").clicked() {
-                    self.show_credentials = true;
-                    self.reload_credentials();
-                }
-                if ui.button("Import Nodes").clicked() {
-                    self.import_nodes();
-                }
-                if ui.button("Export Nodes").clicked() {
-                    self.export_nodes();
-                }
-                if ui.button("Open Log").clicked() {
-                    self.open_log_file();
-                }
-                self.monitoring_toggle_button(ui);
-            });
-            ui.separator();
+            // Center the content with appropriate maximum width
+            ui.horizontal_centered(|ui| {
+                ui.set_max_width(800.0); // Set a reasonable maximum width
+                ui.vertical(|ui| {
+                    ui.heading("Network Monitor");
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Add Node").clicked() {
+                            self.show_add_node = true;
+                            self.new_node_form = NodeForm::default();
+                        }
+                        if ui.button("Credentials").clicked() {
+                            self.show_credentials = true;
+                            self.reload_credentials();
+                        }
+                        if ui.button("Import Nodes").clicked() {
+                            self.import_nodes();
+                        }
+                        if ui.button("Export Nodes").clicked() {
+                            self.export_nodes();
+                        }
+                        if ui.button("Open Log").clicked() {
+                            self.open_log_file();
+                        }
+                        self.monitoring_toggle_button(ui);
+                    });
+                    ui.separator();
 
-            if let Some((msg, _)) = &self.status_message {
-                ui.label(RichText::new(msg).color(Color32::GREEN));
-            }
+                    if let Some((msg, _)) = &self.status_message {
+                        ui.label(RichText::new(msg).color(Color32::GREEN));
+                    }
 
-            self.show_node_list(ui);
+                    self.show_node_list(ui);
+                }); // Close ui.vertical
+            }); // Close ui.horizontal_centered
         });
     }
 
