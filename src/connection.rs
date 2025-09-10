@@ -20,6 +20,7 @@ pub trait AuthenticatedConnectionStrategy: ConnectionStrategy {
     fn connect_with_credentials(&self, target: &str, credential: &SshCredential) -> Result<()>;
 
     /// Test if a connection can be established (without fully connecting)
+    #[allow(dead_code)]
     fn test_connection(&self, target: &str, credential: Option<&SshCredential>) -> Result<bool>;
 }
 
@@ -53,6 +54,7 @@ impl ConnectionStrategy for HttpConnectionStrategy {
 /// SSH connection strategy - opens SSH connection in terminal
 pub struct SshConnectionStrategy {
     /// Optional credential store for retrieving credentials
+    #[allow(dead_code)]
     pub credential_store: Option<Box<dyn CredentialStore>>,
 }
 
@@ -304,6 +306,7 @@ impl AuthenticatedConnectionStrategy for SshConnectionStrategy {
 
 /// Ping connection strategy - for nodes that use ping monitoring
 /// This defaults to SSH since ping targets are typically network devices
+#[allow(dead_code)]
 pub struct PingConnectionStrategy {
     ssh_strategy: SshConnectionStrategy,
 }

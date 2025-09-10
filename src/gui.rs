@@ -176,6 +176,7 @@ pub struct NetworkMonitorApp {
     credentials: Vec<CredentialSummary>,
     show_credentials: bool,
     show_add_credential: bool,
+    #[allow(dead_code)]
     editing_credential: Option<String>,
     new_credential_form: CredentialForm,
     pending_credential_action: Option<CredentialAction>,
@@ -510,7 +511,7 @@ impl NetworkMonitorApp {
                 // Find the credential name by ID
                 self.credentials
                     .iter()
-                    .find(|c| c.id.to_string() == *cred_id)
+                    .find(|c| c.id.to_string().as_str() == cred_id)
                     .map(|c| c.name.clone())
                     .unwrap_or_else(|| cred_id.clone())
             } else {
