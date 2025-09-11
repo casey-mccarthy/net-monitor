@@ -58,6 +58,13 @@ RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warning
 cargo clippy --all-targets --all-features -- -A dead_code -D warnings
 ```
 
+### Security Audit
+```bash
+cargo audit
+```
+
+Note: The project uses `.cargo/audit.toml` to ignore known vulnerabilities that have no current fix available.
+
 ## Development Workflow
 
 When making changes:
