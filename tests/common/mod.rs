@@ -42,6 +42,7 @@ pub fn create_test_http_node(
         last_check: None,
         response_time: None,
         monitoring_interval: interval,
+        credential_id: None,
     }
 }
 
@@ -65,6 +66,7 @@ pub fn create_test_ping_node(
         last_check: None,
         response_time: None,
         monitoring_interval: interval,
+        credential_id: None,
     }
 }
 
