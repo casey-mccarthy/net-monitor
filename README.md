@@ -1,58 +1,124 @@
 # Network Monitor
 
-A simple network monitoring application written in Rust with a GUI interface. Monitor network nodes using HTTP GET requests and ping.
+A robust network monitoring application built with Rust and egui for monitoring HTTP endpoints, network hosts, and SSH connections.
 
 ## Features
 
-- **Multiple Monitoring Types**: Support for HTTP GET and ICMP ping
-- **GUI Interface**: Clean and intuitive interface built with egui
-- **Local Data Storage**: SQLite database for persistent storage of nodes and monitoring history
-- **Import/Export**: Import nodes from JSON or CSV files, export to JSON
-- **Real-time Monitoring**: Continuous monitoring with configurable intervals
-- **Historical Data**: Track monitoring results over time
-- **Cross-platform**: Works on Windows, macOS, and Linux
+- **Multiple Connection Types**
+  - HTTP/HTTPS endpoint monitoring with status code validation
+  - ICMP ping for network host availability
+  - SSH connection testing with key-based authentication
+  
+- **Secure Credential Management**
+  - Encrypted storage for SSH keys and passwords
+  - Support for multiple authentication methods
+  - Secure credential association with monitored nodes
+
+- **User Interface**
+  - Clean, responsive GUI built with egui
+  - Real-time status updates
+  - Historical monitoring data visualization
+  - System tray integration for background monitoring
+
+- **Data Management**
+  - SQLite database for persistent storage
+  - Import/Export functionality (JSON, CSV)
+  - Automatic data migration between versions
+  - Configurable monitoring intervals
+
+- **Cross-Platform Support**
+  - Native binaries for Windows, macOS, and Linux
+  - Consistent experience across platforms
+  - Platform-specific optimizations
 
 ## Installation
 
-### Prerequisites
+### Download Pre-built Binaries
 
-- Rust (latest stable version)
-- Cargo
+Download the latest release for your platform from the [Releases page](https://github.com/casey-mccarthy/net-monitor/releases):
 
-### Running
+- **Windows**: `net-monitor-windows-x64.exe`
+- **macOS Intel**: `net-monitor-macos-x64`
+- **macOS Apple Silicon**: `net-monitor-macos-arm64`
+- **Linux**: `net-monitor-linux-x64`
+
+### Build from Source
+
+Prerequisites:
+- Rust 1.70+ (latest stable recommended)
+- Platform-specific dependencies (see below)
 
 ```bash
-git clone https://github.com/yourusername/net-monitor.git
+git clone https://github.com/casey-mccarthy/net-monitor.git
 cd net-monitor
-cargo run --release
+cargo build --release
+./target/release/net-monitor
 ```
+
+#### Platform-Specific Dependencies
+
+**Linux:**
+```bash
+sudo apt-get install libgtk-3-dev libssl-dev
+```
+
+**macOS:**
+No additional dependencies required.
+
+**Windows:**
+No additional dependencies required.
 
 ## Usage
 
-### Basic Usage
+### Getting Started
 
-1. **Add Node**: Click to add a new node with name, IP address, and monitor type (HTTP GET or Ping)
-2. **Monitor**: Use "Check Now" for one-time checks or "Start Monitoring" for continuous monitoring
-3. **Import/Export**: Import nodes from JSON/CSV or export for backup
+1. **Launch the application** - Double-click the executable or run from terminal
+2. **Add a node to monitor**:
+   - Click "Add Node" 
+   - Enter node details (name, address/URL)
+   - Select connection type (HTTP, Ping, or SSH)
+   - Configure credentials if needed (for SSH)
+3. **Start monitoring**:
+   - Click "Check Now" for single check
+   - Click "Start Monitoring" for continuous monitoring
+   - View real-time status in the main window
 
-## Import Formats
+### Connection Types
 
-**JSON**: Full configuration with all settings  
-**CSV**: Simple format - `name,ip,type` (e.g., `Web Server,192.168.1.100,http_get`)
+- **HTTP/HTTPS**: Monitor web endpoints, APIs, and services
+- **Ping (ICMP)**: Check network host availability
+- **SSH**: Test SSH server connectivity and authentication
 
-## Data Storage
+### Import/Export
 
-Data is stored locally in SQLite:
-- **Windows**: `%LOCALAPPDATA%\net-monitor\network_monitor.db`
-- **macOS**: `~/Library/Application Support/net-monitor/network_monitor.db`
-- **Linux**: `~/.local/share/net-monitor/network_monitor.db`
+**Supported formats:**
+- JSON: Full configuration with all settings
+- CSV: Simplified format for bulk imports
 
-## Key Dependencies
+**CSV Format:**
+```csv
+name,address,type
+Web Server,https://example.com,http
+Database,192.168.1.100,ping
+SSH Server,10.0.0.5,ssh
+```
 
-- **egui/eframe**: GUI framework
-- **rusqlite**: SQLite database
-- **reqwest**: HTTP client
-- **ping**: ICMP ping functionality
+### Data Storage
+
+Application data is stored locally:
+- **Windows**: `%LOCALAPPDATA%\net-monitor\`
+- **macOS**: `~/Library/Application Support/net-monitor/`
+- **Linux**: `~/.local/share/net-monitor/`
+
+## Architecture
+
+Built with modern Rust practices:
+- **egui/eframe**: Native GUI framework
+- **tokio**: Async runtime for concurrent monitoring
+- **rusqlite**: Embedded database with migrations
+- **reqwest**: HTTP/HTTPS client
+- **ssh2**: SSH protocol support
+- **ring**: Cryptographic operations for credential encryption
 
 ## Development
 
@@ -61,35 +127,41 @@ Data is stored locally in SQLite:
 ```
 src/
 ├── main.rs          # Application entry point
-├── models.rs        # Data structures
-├── database.rs      # SQLite operations
-├── monitor.rs       # Monitoring logic
-└── gui.rs          # GUI interface
+├── gui.rs           # User interface implementation
+├── models.rs        # Data models and types
+├── database.rs      # Database operations and migrations
+├── monitor.rs       # Core monitoring logic
+├── connection.rs    # Connection strategies (HTTP, Ping, SSH)
+└── credentials.rs   # Secure credential management
 ```
 
-## License
+### Building and Testing
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+```bash
+# Development build with debug symbols
+cargo build
+
+# Run tests
+cargo test
+
+# Run with debug logging
+RUST_LOG=debug cargo run
+
+# Production build with optimizations
+cargo build --release
+```
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow and guidelines.
 
-## Troubleshooting
+## License
 
-- **Ping Permission Denied**: May require elevated privileges on some systems
-- **Database Locked**: Close other instances of the application
-- **Debug Logs**: Run with `RUST_LOG=debug cargo run`
+MIT License - see [LICENSE](LICENSE) file for details.
 
-## Roadmap
+## Support
 
-- [ ] Email notifications
-- [ ] Web dashboard
-- [ ] Custom monitoring scripts
-- [ ] Performance graphs
-- [ ] Alert thresholds
+- **Issues**: [GitHub Issues](https://github.com/casey-mccarthy/net-monitor/issues)
+- **Documentation**: See `.claude/` folder for detailed documentation
+- **Releases**: [GitHub Releases](https://github.com/casey-mccarthy/net-monitor/releases)
 

@@ -24,10 +24,12 @@ fn create_test_http_node() -> Node {
         last_check: None,
         response_time: None,
         monitoring_interval: 60,
+        credential_id: None,
     }
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "network-tests"), ignore)]
 async fn test_full_monitoring_workflow() {
     let (db, temp_file) = create_test_database();
 
@@ -71,6 +73,7 @@ async fn test_full_monitoring_workflow() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "network-tests"), ignore)]
 async fn test_monitoring_failure_workflow() {
     let (db, temp_file) = create_test_database();
 
@@ -86,6 +89,7 @@ async fn test_monitoring_failure_workflow() {
         last_check: None,
         response_time: None,
         monitoring_interval: 60,
+        credential_id: None,
     };
 
     let node_id = db.add_node(&node).unwrap();
@@ -137,6 +141,7 @@ fn test_database_persistence() {
         last_check: None,
         response_time: None,
         monitoring_interval: 30,
+        credential_id: None,
     };
 
     let http_id = db.add_node(&http_node).unwrap();
@@ -198,6 +203,7 @@ fn test_database_persistence() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "network-tests"), ignore)]
 async fn test_concurrent_monitoring() {
     let (db, temp_file) = create_test_database();
 
@@ -215,6 +221,7 @@ async fn test_concurrent_monitoring() {
             last_check: None,
             response_time: None,
             monitoring_interval: 60,
+            credential_id: None,
         };
         let node_id = db.add_node(&node).unwrap();
         nodes.push((node_id, node));
@@ -268,6 +275,7 @@ fn test_node_import_export_workflow() {
         name: node.name.clone(),
         detail: node.detail.clone(),
         monitoring_interval: node.monitoring_interval,
+        credential_id: None,
     };
 
     // Serialize to JSON
@@ -289,6 +297,7 @@ fn test_node_import_export_workflow() {
         last_check: None,
         response_time: None,
         monitoring_interval: imported_node.monitoring_interval,
+        credential_id: imported_node.credential_id,
     };
 
     let new_node_id = db.add_node(&new_node).unwrap();

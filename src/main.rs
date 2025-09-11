@@ -60,7 +60,11 @@ fn main() -> Result<()> {
     eframe::run_native(
         "Network Monitor",
         options,
-        Box::new(|_cc| Box::new(NetworkMonitorApp::new(database).expect("Failed to create app"))),
+        Box::new(|_cc| {
+            Ok(Box::new(
+                NetworkMonitorApp::new(database).expect("Failed to create app"),
+            ))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("Eframe error: {}", e))
 }

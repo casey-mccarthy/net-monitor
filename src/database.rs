@@ -70,16 +70,18 @@ impl Database {
     fn migrate_credential_column(&self, conn: &Connection) -> Result<()> {
         // Check if credential_id column already exists
         let mut stmt = conn.prepare("PRAGMA table_info(nodes)")?;
-        let column_exists = stmt.query_map([], |row| {
-            let column_name: String = row.get(1)?;
-            Ok(column_name)
-        })?.any(|name| name.unwrap_or_default() == "credential_id");
+        let column_exists = stmt
+            .query_map([], |row| {
+                let column_name: String = row.get(1)?;
+                Ok(column_name)
+            })?
+            .any(|name| name.unwrap_or_default() == "credential_id");
 
         if !column_exists {
             conn.execute("ALTER TABLE nodes ADD COLUMN credential_id TEXT", [])?;
             info!("Added credential_id column to nodes table");
         }
-        
+
         Ok(())
     }
 

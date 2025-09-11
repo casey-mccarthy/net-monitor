@@ -13,7 +13,14 @@
       "Bash(find:*)",
       "Bash(RUST_BACKTRACE=1 cargo run)",
       "Bash(pkill:*)",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "Bash(gh pr list:*)",
+      "Bash(git tag:*)",
+      "Bash(git merge-base:*)",
+      "Bash(git log:*)",
+      "Bash(cat:*)",
+      "Bash(gh run list:*)",
+      "Bash(rustup target:*)"
     ],
     "deny": [],
     "ask": []

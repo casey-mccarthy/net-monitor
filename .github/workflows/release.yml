@@ -24,15 +24,16 @@ jobs:
       - name: Check for version change and determine bump type
         id: check
         run: |
-          # Get the last commit that changed Cargo.toml
-          LAST_VERSION_COMMIT=$(git log -1 --format=%H -- Cargo.toml)
+          # Get the last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           
-          # Get commits since last version change
-          if [ "$LAST_VERSION_COMMIT" != "${{ github.sha }}" ]; then
-            COMMITS=$(git log --format=%s ${LAST_VERSION_COMMIT}..HEAD)
+          # Get commits since last tag
+          if [ -n "$LAST_TAG" ]; then
+            COMMITS=$(git log --format=%s ${LAST_TAG}..HEAD)
+            echo "Analyzing commits since $LAST_TAG"
           else
-            # If this commit changed Cargo.toml, check commits since previous version
-            COMMITS=$(git log --format=%s HEAD~1..HEAD)
+            COMMITS=$(git log --format=%s)
+            echo "Analyzing all commits (no previous tags found)"
           fi
           
           echo "Commits to analyze:"
@@ -49,6 +50,9 @@ jobs:
             VERSION_TYPE="minor"
           # Check for fixes (patch bump)
           elif echo "$COMMITS" | grep -qE "^fix(\(.+\))?:"; then
+            VERSION_TYPE="patch"
+          # Check for any other conventional commits that warrant a patch bump
+          elif echo "$COMMITS" | grep -qE "^(docs|style|refactor|perf|test|build|ci|chore)(\(.+\))?:"; then
             VERSION_TYPE="patch"
           fi
           
@@ -132,11 +136,11 @@ jobs:
             name: net-monitor-linux-x64
             archive: net-monitor-v${{ needs.check-version.outputs.new-version }}-linux-x64.tar.gz
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-13  # Use Intel runner for x86_64 target
             name: net-monitor-macos-x64
             archive: net-monitor-v${{ needs.check-version.outputs.new-version }}-macos-x64.tar.gz
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: macos-latest  # Use latest (ARM64) runner for ARM64 target
             name: net-monitor-macos-arm64
             archive: net-monitor-v${{ needs.check-version.outputs.new-version }}-macos-arm64.tar.gz
 
@@ -226,28 +230,111 @@ jobs:
         with:
           path: artifacts
 
-      - name: Generate release notes
+      - name: Generate release notes with changelog
         run: |
           # Get commits since last release
           LAST_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          
           if [ -n "$LAST_TAG" ]; then
-            COMMITS=$(git log --format="* %s" ${LAST_TAG}..HEAD)
+            echo "Generating changelog since $LAST_TAG"
+            RAW_COMMITS=$(git log --format="%s|%b" ${LAST_TAG}..HEAD | tr '\n' '\0')
           else
-            COMMITS=$(git log --format="* %s")
+            echo "Generating changelog for all commits"
+            RAW_COMMITS=$(git log --format="%s|%b" | tr '\n' '\0')
           fi
           
+          # Initialize categories
+          BREAKING=""
+          FEATURES=""
+          FIXES=""
+          PERFORMANCE=""
+          DOCS=""
+          OTHER=""
+          
+          # Parse commits by type
+          while IFS= read -r -d '' commit; do
+            SUBJECT=$(echo "$commit" | cut -d'|' -f1)
+            BODY=$(echo "$commit" | cut -d'|' -f2-)
+            
+            # Check for breaking changes
+            if echo "$SUBJECT $BODY" | grep -q "BREAKING CHANGE\|!:"; then
+              BREAKING="${BREAKING}\n- ${SUBJECT}"
+            # Categorize by conventional commit type
+            elif echo "$SUBJECT" | grep -qE "^feat(\(.+\))?:"; then
+              FEATURES="${FEATURES}\n- ${SUBJECT#*: }"
+            elif echo "$SUBJECT" | grep -qE "^fix(\(.+\))?:"; then
+              FIXES="${FIXES}\n- ${SUBJECT#*: }"
+            elif echo "$SUBJECT" | grep -qE "^perf(\(.+\))?:"; then
+              PERFORMANCE="${PERFORMANCE}\n- ${SUBJECT#*: }"
+            elif echo "$SUBJECT" | grep -qE "^docs(\(.+\))?:"; then
+              DOCS="${DOCS}\n- ${SUBJECT#*: }"
+            elif echo "$SUBJECT" | grep -qE "^(style|refactor|test|build|ci|chore)(\(.+\))?:"; then
+              OTHER="${OTHER}\n- ${SUBJECT#*: }"
+            fi
+          done < <(echo "$RAW_COMMITS" | tr '\0' '\n')
+          
+          # Generate release notes
           echo "# Release v${{ needs.check-version.outputs.new-version }}" > release_notes.md
           echo "" >> release_notes.md
-          echo "## Changes" >> release_notes.md
-          echo "$COMMITS" >> release_notes.md
+          
+          # Add date
+          echo "**Release Date:** $(date +'%Y-%m-%d')" >> release_notes.md
           echo "" >> release_notes.md
-          echo "## Assets" >> release_notes.md
+          
+          # Add changelog sections if not empty
+          if [ -n "$BREAKING" ]; then
+            echo "## ⚠️ Breaking Changes" >> release_notes.md
+            echo "$BREAKING" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+          
+          if [ -n "$FEATURES" ]; then
+            echo "## ✨ Features" >> release_notes.md
+            echo "$FEATURES" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+          
+          if [ -n "$FIXES" ]; then
+            echo "## 🐛 Bug Fixes" >> release_notes.md
+            echo "$FIXES" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+          
+          if [ -n "$PERFORMANCE" ]; then
+            echo "## ⚡ Performance Improvements" >> release_notes.md
+            echo "$PERFORMANCE" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+          
+          if [ -n "$DOCS" ]; then
+            echo "## 📚 Documentation" >> release_notes.md
+            echo "$DOCS" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+          
+          if [ -n "$OTHER" ]; then
+            echo "## 🔧 Other Changes" >> release_notes.md
+            echo "$OTHER" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+          
+          # Add installation section
+          echo "## 📦 Installation" >> release_notes.md
+          echo "" >> release_notes.md
           echo "Download the appropriate binary for your platform:" >> release_notes.md
           echo "" >> release_notes.md
           echo "- **Windows**: \`net-monitor-v${{ needs.check-version.outputs.new-version }}-windows-x64.zip\`" >> release_notes.md
           echo "- **macOS (Intel)**: \`net-monitor-v${{ needs.check-version.outputs.new-version }}-macos-x64.tar.gz\`" >> release_notes.md
           echo "- **macOS (Apple Silicon)**: \`net-monitor-v${{ needs.check-version.outputs.new-version }}-macos-arm64.tar.gz\`" >> release_notes.md
           echo "- **Linux**: \`net-monitor-v${{ needs.check-version.outputs.new-version }}-linux-x64.tar.gz\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Checksums" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "SHA256 checksums are available in \`checksums.txt\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "---" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "**Full Changelog**: https://github.com/casey-mccarthy/net-monitor/compare/${LAST_TAG}...v${{ needs.check-version.outputs.new-version }}" >> release_notes.md
 
       - name: Generate checksums
         run: |

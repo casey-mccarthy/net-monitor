@@ -1,0 +1,148 @@
+name: Build Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target to build for'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - x86_64-pc-windows-gnu
+          - x86_64-unknown-linux-gnu
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+
+jobs:
+  build-single:
+    if: ${{ github.event.inputs.target != 'all' }}
+    name: Build ${{ github.event.inputs.target }}
+    runs-on: ${{ contains(github.event.inputs.target, 'apple') && 'macos-latest' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ github.event.inputs.target }}
+      
+      - name: Install system dependencies (Linux)
+        if: contains(github.event.inputs.target, 'linux') || contains(github.event.inputs.target, 'windows')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            libatk1.0-dev \
+            libgdk-pixbuf-2.0-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libgl1-mesa-dev \
+            libasound2-dev
+          
+          # Install cross-compilation dependencies for Windows target
+          if [[ "${{ github.event.inputs.target }}" == "x86_64-pc-windows-gnu" ]]; then
+            sudo apt-get install -y gcc-mingw-w64-x86-64
+          fi
+      
+      - name: Build
+        run: |
+          echo "Building for target: ${{ github.event.inputs.target }}"
+          cargo build --release --target ${{ github.event.inputs.target }} --verbose
+      
+      - name: List build artifacts
+        run: |
+          echo "Build artifacts:"
+          ls -la target/${{ github.event.inputs.target }}/release/
+      
+      - name: Check binary size
+        run: |
+          if [[ "${{ github.event.inputs.target }}" == *"windows"* ]]; then
+            du -h target/${{ github.event.inputs.target }}/release/net-monitor.exe
+          else
+            du -h target/${{ github.event.inputs.target }}/release/net-monitor
+          fi
+
+  build-all:
+    if: ${{ github.event.inputs.target == 'all' }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-pc-windows-gnu
+            os: ubuntu-latest
+            name: Windows x64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: Linux x64
+          - target: x86_64-apple-darwin
+            os: macos-13  # Use Intel runner for x86_64 target
+            name: macOS x64
+          - target: aarch64-apple-darwin
+            os: macos-latest  # Use latest (ARM64) runner for ARM64 target
+            name: macOS ARM64
+    
+    runs-on: ${{ matrix.os }}
+    name: Build - ${{ matrix.name }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      
+      - name: Install system dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            libatk1.0-dev \
+            libgdk-pixbuf-2.0-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libgl1-mesa-dev \
+            libasound2-dev
+          
+          # Install cross-compilation dependencies for Windows target
+          if [[ "${{ matrix.target }}" == "x86_64-pc-windows-gnu" ]]; then
+            sudo apt-get install -y gcc-mingw-w64-x86-64
+          fi
+      
+      - name: Build with verbose output
+        run: |
+          echo "Building for target: ${{ matrix.target }}"
+          cargo build --release --target ${{ matrix.target }} --verbose
+      
+      - name: List build artifacts
+        run: |
+          echo "Build artifacts for ${{ matrix.target }}:"
+          ls -la target/${{ matrix.target }}/release/
+      
+      - name: Check binary
+        run: |
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            file target/${{ matrix.target }}/release/net-monitor.exe
+            du -h target/${{ matrix.target }}/release/net-monitor.exe
+          else
+            file target/${{ matrix.target }}/release/net-monitor
+            du -h target/${{ matrix.target }}/release/net-monitor
+          fi
+      
+      - name: Upload artifact for debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/net-monitor*
+          retention-days: 1

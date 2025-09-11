@@ -28,6 +28,7 @@ impl SensitiveString {
         &self.0
     }
 
+    #[allow(dead_code)]
     pub fn into_string(mut self) -> String {
         let result = self.0.clone();
         self.0.zeroize();
@@ -83,6 +84,7 @@ impl SshCredential {
     }
 
     /// Check if this credential requires a password/passphrase
+    #[allow(dead_code)]
     pub fn requires_secret(&self) -> bool {
         matches!(
             self,
@@ -168,6 +170,7 @@ pub trait CredentialStore: Send + Sync {
     fn list_credentials(&self) -> Result<Vec<CredentialSummary>>;
 
     /// Update a credential
+    #[allow(dead_code)]
     fn update_credential(
         &mut self,
         id: &CredentialId,
@@ -180,6 +183,7 @@ pub trait CredentialStore: Send + Sync {
     fn delete_credential(&mut self, id: &CredentialId) -> Result<()>;
 
     /// Update last used timestamp
+    #[allow(dead_code)]
     fn mark_credential_used(&mut self, id: &CredentialId) -> Result<()>;
 }
 
@@ -445,12 +449,14 @@ impl CredentialStore for FileCredentialStore {
 }
 
 /// Platform-specific credential store using system keyring
+#[allow(dead_code)]
 pub struct KeyringCredentialStore {
     service_name: String,
     file_fallback: Option<FileCredentialStore>,
 }
 
 impl KeyringCredentialStore {
+    #[allow(dead_code)]
     pub fn new(master_password: String) -> Self {
         let service_name = "net-monitor".to_string();
 
@@ -482,12 +488,14 @@ impl KeyringCredentialStore {
     }
 
     /// Get keyring entry for a credential ID
+    #[allow(dead_code)]
     fn get_keyring_entry(&self, id: &CredentialId) -> Result<keyring::Entry> {
         keyring::Entry::new(&self.service_name, id)
             .map_err(|e| anyhow!("Failed to create keyring entry: {}", e))
     }
 
     /// Store credential in keyring
+    #[allow(dead_code)]
     fn store_in_keyring(&self, id: &CredentialId, credential: &StoredCredential) -> Result<()> {
         let entry = self.get_keyring_entry(id)?;
         let json_data = serde_json::to_string(credential)?;
@@ -497,6 +505,7 @@ impl KeyringCredentialStore {
     }
 
     /// Retrieve credential from keyring
+    #[allow(dead_code)]
     fn get_from_keyring(&self, id: &CredentialId) -> Result<Option<StoredCredential>> {
         let entry = self.get_keyring_entry(id)?;
         match entry.get_password() {
@@ -613,6 +622,7 @@ pub mod ssh_keys {
     use std::path::Path;
 
     /// Discover SSH keys in the standard SSH directory
+    #[allow(dead_code)]
     pub fn discover_ssh_keys() -> Result<Vec<PathBuf>> {
         let ssh_dir = dirs::home_dir()
             .ok_or_else(|| anyhow!("Could not find home directory"))?
@@ -636,6 +646,7 @@ pub mod ssh_keys {
     }
 
     /// Check if a file is likely a private SSH key
+    #[allow(dead_code)]
     fn is_private_key(path: &Path) -> Result<bool> {
         let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
 
@@ -661,6 +672,7 @@ pub mod ssh_keys {
     }
 
     /// Validate an SSH private key format
+    #[allow(dead_code)]
     pub fn validate_private_key(key_data: &str) -> Result<()> {
         let key_data = key_data.trim();
 

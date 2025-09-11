@@ -73,6 +73,7 @@ impl SshConnectionStrategy {
     }
 
     /// Create a new SSH connection strategy with credential store
+    #[allow(dead_code)]
     pub fn with_credential_store(credential_store: Box<dyn CredentialStore>) -> Self {
         Self {
             credential_store: Some(credential_store),
@@ -162,6 +163,7 @@ impl SshConnectionStrategy {
     }
 
     /// Test TCP connection to SSH port
+    #[allow(dead_code)]
     fn test_tcp_connection(&self, host: &str, port: u16) -> Result<bool> {
         let addr = format!("{}:{}", host, port);
         match addr.to_socket_addrs() {
@@ -318,12 +320,14 @@ impl Default for PingConnectionStrategy {
 }
 
 impl PingConnectionStrategy {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             ssh_strategy: SshConnectionStrategy::new(),
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_credential_store(credential_store: Box<dyn CredentialStore>) -> Self {
         Self {
             ssh_strategy: SshConnectionStrategy::with_credential_store(credential_store),
@@ -362,11 +366,13 @@ pub struct ConnectionContext {
 
 impl ConnectionContext {
     /// Create a new connection context with the given strategy
+    #[allow(dead_code)]
     pub fn new(strategy: Box<dyn ConnectionStrategy>) -> Self {
         Self { strategy }
     }
 
     /// Execute the connection using the configured strategy
+    #[allow(dead_code)]
     pub fn connect(&self, target: &str) -> Result<()> {
         self.strategy.connect(target)
     }
@@ -379,6 +385,7 @@ impl ConnectionContext {
 }
 
 /// Factory function to create appropriate connection strategy based on connection type
+#[allow(dead_code)]
 pub fn create_connection_strategy(connection_type: ConnectionType) -> Box<dyn ConnectionStrategy> {
     match connection_type {
         ConnectionType::Http => Box::new(HttpConnectionStrategy),
@@ -388,6 +395,7 @@ pub fn create_connection_strategy(connection_type: ConnectionType) -> Box<dyn Co
 }
 
 /// Factory function to create authenticated connection strategy
+#[allow(dead_code)]
 pub fn create_authenticated_connection_strategy(
     connection_type: ConnectionType,
     credential_store: Option<Box<dyn CredentialStore>>,
