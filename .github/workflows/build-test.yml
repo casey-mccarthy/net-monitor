@@ -70,7 +70,6 @@ jobs:
 
   build-all:
     if: ${{ github.event.inputs.target == 'all' }}
-    name: Build All Targets
     strategy:
       matrix:
         include:
