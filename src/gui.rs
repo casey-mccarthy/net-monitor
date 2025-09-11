@@ -274,11 +274,11 @@ impl NetworkMonitorApp {
     fn show_main_window(&mut self, ctx: &Context) {
         // Add menu bar
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("Help", |ui| {
                     if ui.button("About").clicked() {
                         self.show_about = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
             });
@@ -519,7 +519,7 @@ impl NetworkMonitorApp {
             ui.text_edit_singleline(&mut form.monitoring_interval);
             ui.end_row();
             ui.label("Monitor Type:");
-            egui::ComboBox::from_id_source("monitor_type_combo")
+            egui::ComboBox::from_id_salt("monitor_type_combo")
                 .selected_text(form.monitor_type.to_string())
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut form.monitor_type, MonitorTypeForm::Http, "HTTP");
@@ -538,7 +538,7 @@ impl NetworkMonitorApp {
             } else {
                 "None (Use default SSH)".to_string()
             };
-            egui::ComboBox::from_id_source("credential_combo")
+            egui::ComboBox::from_id_salt("credential_combo")
                 .selected_text(selected_text)
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut form.credential_id, None, "None (Use default SSH)");
