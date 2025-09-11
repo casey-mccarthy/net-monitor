@@ -29,6 +29,7 @@ fn create_test_http_node() -> Node {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "network-tests"), ignore)]
 async fn test_full_monitoring_workflow() {
     let (db, temp_file) = create_test_database();
 
@@ -72,6 +73,7 @@ async fn test_full_monitoring_workflow() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "network-tests"), ignore)]
 async fn test_monitoring_failure_workflow() {
     let (db, temp_file) = create_test_database();
 
@@ -201,6 +203,7 @@ fn test_database_persistence() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "network-tests"), ignore)]
 async fn test_concurrent_monitoring() {
     let (db, temp_file) = create_test_database();
 

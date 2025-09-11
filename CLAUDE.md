@@ -21,9 +21,14 @@ cargo clean && cargo build --release
 
 ## Test Commands
 
-### Run All Tests (No Warnings)
+### Run All Tests (No Warnings, Skip Network Tests)
 ```bash
 RUSTFLAGS="-A dead_code" cargo test --all-features
+```
+
+### Run All Tests Including Network Tests (Local Development)
+```bash
+RUSTFLAGS="-A dead_code" cargo test --all-features --features network-tests
 ```
 
 ### Run Tests with Output
@@ -34,6 +39,11 @@ RUSTFLAGS="-A dead_code" cargo test --all-features -- --nocapture
 ### Run Integration Tests Only
 ```bash
 RUSTFLAGS="-A dead_code" cargo test --test integration_tests
+```
+
+### Run Integration Tests with Network Tests
+```bash
+RUSTFLAGS="-A dead_code" cargo test --test integration_tests --features network-tests
 ```
 
 ## Quality Checks
