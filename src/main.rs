@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 mod connection;
 mod credentials;
 mod database;
