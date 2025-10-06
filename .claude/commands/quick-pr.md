@@ -30,7 +30,13 @@ I'll help you create a feature branch, work on your changes, rebase on main, and
    - Rebase your commits on top of main (linear history)
    - Handle any conflicts if they occur
 
-5. **Create pull request**
+5. **Run integration tests**
+   - run integration tests to validate everything works
+   - correct any issues on failed tests before continuing
+   - check if tests need to be updated according to new features or fixes implemented
+
+
+6. **Create pull request**
    - Push branch to remote with tracking
    - Generate PR description with changelog from commits
    - Create PR using GitHub CLI
