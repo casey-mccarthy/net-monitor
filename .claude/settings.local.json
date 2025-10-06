@@ -20,7 +20,8 @@
       "Bash(git log:*)",
       "Bash(cat:*)",
       "Bash(gh run list:*)",
-      "Bash(rustup target:*)"
+      "Bash(rustup target:*)",
+      "Bash(git checkout:*)"
     ],
     "deny": [],
     "ask": []
