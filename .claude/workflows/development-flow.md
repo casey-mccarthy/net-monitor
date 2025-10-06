@@ -2,20 +2,45 @@
 
 This document describes the standard development workflow for net-monitor.
 
+**This project uses REBASING to maintain clean, linear commit history.**
+
 ## Workflow Overview
 
 ```mermaid
 graph LR
-    A[Main Branch] --> B[Create Feature Branch]
-    B --> C[Development]
-    C --> D[Commit Changes]
-    D --> E[Sync with Main]
-    E --> F[Create PR]
-    F --> G[Code Review]
-    G --> H[Merge to Main]
-    H --> I[Automatic Release]
+    A[Main Branch] --> B{Simple or Complex?}
+    B -->|Simple Fix| C[Commit to Main]
+    C --> J[Push to Main]
+    J --> I[Automatic Release]
+    B -->|Complex/Feature| D[Create Feature Branch]
+    D --> E[Development]
+    E --> F[Commit Changes]
+    F --> G[Rebase on Main]
+    G --> H[Create PR]
+    H --> K[Code Review]
+    K --> L[Merge to Main]
+    L --> I
     I --> A
 ```
+
+## Two Workflows
+
+### 1. Direct to Main (Simple Changes)
+For quick fixes, doc updates, or small standalone changes:
+- Work directly on main branch
+- Commit with conventional commit message
+- Push to main
+- Automatic release triggered
+
+### 2. Feature Branch + Rebase (Complex Changes)
+For features, refactors, or changes requiring review:
+- Create feature branch
+- Make changes and commits
+- **Rebase on main** (not merge!)
+- Create pull request
+- Code review
+- Merge to main
+- Automatic release triggered
 
 ## Step-by-Step Process
 
@@ -64,14 +89,18 @@ Commit types:
 
 ### 4. Keep Branch Updated
 
-Regularly sync with main to avoid conflicts:
+Regularly sync with main to avoid conflicts. **Use rebase for clean history:**
 
 ```bash
 # Fetch latest changes
 git fetch origin main
 
-# Merge main into your branch
-git merge origin/main
+# Rebase your branch on main (preferred)
+git rebase origin/main
+
+# Force push with safety flag
+git push origin feature/your-feature-name --force-with-lease
+
 # OR use Claude command: "Sync with main"
 ```
 
@@ -89,12 +118,17 @@ Before creating a PR, ensure:
 ### 6. Create Pull Request
 
 ```bash
-# Push your branch
-git push -u origin feature/your-feature-name
+# Rebase on main first!
+git fetch origin main && git rebase origin/main
+
+# Push your branch (or force push if already exists)
+git push -u origin feature/your-feature-name --force-with-lease
 
 # Create PR via GitHub CLI
 gh pr create --title "feat: your feature" --body "Description"
-# OR use Claude command: "Prepare a PR"
+
+# OR use Claude command for all steps: "/quick-pr feature-name"
+# OR just create PR: "/prepare-pr"
 ```
 
 PR should include:
@@ -103,6 +137,7 @@ PR should include:
 - Testing performed
 - Screenshots if UI changes
 - Related issue references
+- **Clean, rebased commit history**
 
 ### 7. Code Review Process
 
@@ -121,10 +156,21 @@ PR should include:
 ### 8. Merging
 
 Once approved:
-1. Ensure branch is up to date with main
+1. **Rebase on main one final time** to ensure linear history
 2. All CI checks pass
-3. Squash and merge (preferred) or merge commit
+3. Merge to main (can use squash if commits need cleanup)
 4. Delete feature branch after merge
+5. Automatic release process begins
+
+```bash
+# Before merging, final rebase
+git fetch origin main
+git rebase origin/main
+git push origin feature/your-feature-name --force-with-lease
+
+# Then merge via GitHub UI or:
+gh pr merge --merge  # or --squash if needed
+```
 
 ### 9. Release Process
 
@@ -233,23 +279,67 @@ git reset --soft HEAD~1
 # Update commit message
 git commit --amend
 
-# Interactive rebase (clean history)
+# Interactive rebase (clean history before PR)
 git rebase -i HEAD~3
+
+# Rebase on main
+git fetch origin main && git rebase origin/main
+
+# Abort rebase if conflicts are too complex
+git rebase --abort
+
+# Continue rebase after resolving conflicts
+git add .
+git rebase --continue
+
+# Force push safely after rebase
+git push origin branch-name --force-with-lease
 
 # Stash changes temporarily
 git stash
 git stash pop
+
+# View commit history graph
+git log --graph --oneline --all
 ```
 
 ## Claude Commands Available
 
-- **Create Feature Branch**: Start new feature development
-- **Commit Feature**: Create conventional commit
-- **Sync Main**: Update branch with latest main
-- **Prepare PR**: Generate PR with changelog
-- **Release**: Trigger new version release
+- **/create-feature-branch**: Start new feature development on a branch
+- **/commit-feature**: Create conventional commit
+- **/sync-main**: Rebase branch on latest main (uses rebase by default)
+- **/prepare-pr**: Generate PR with changelog from current branch
+- **/quick-pr**: Complete workflow - create branch, work, rebase, create PR (all-in-one)
+- **/release**: Trigger new version release
 
 See `.claude/commands/` for detailed documentation.
+
+## Quick Start Examples
+
+### Simple fix workflow:
+```bash
+# Work directly on main
+git checkout main
+git pull origin main
+# make changes
+git add .
+git commit -m "fix: description"
+git push origin main
+# Automatic release triggers!
+```
+
+### Feature workflow:
+```bash
+# Use quick-pr command for guided workflow
+/quick-pr email-notifications
+
+# OR manual steps:
+git checkout -b feature/email-notifications
+# make changes and commits
+git fetch origin main && git rebase origin/main
+git push -u origin feature/email-notifications --force-with-lease
+gh pr create
+```
 
 ## Getting Help
 
