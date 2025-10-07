@@ -282,22 +282,40 @@ impl std::str::FromStr for NodeStatus {
 }
 
 #[cfg(test)]
-mod tests {
+mod test_helpers {
     use super::*;
-    use crate::models::{MonitorDetail, MonitoringResult, Node, NodeStatus};
+    use crate::models::{MonitorDetail, Node, NodeStatus};
     use chrono::Utc;
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
-    /// Creates a temporary database for testing
-    fn create_test_database() -> (Database, NamedTempFile) {
-        let temp_file = NamedTempFile::new().unwrap();
-        let db = Database::new(temp_file.path()).unwrap();
-        (db, temp_file)
+    /// RAII test database fixture for unit tests
+    pub struct TestDb {
+        pub db: Database,
+        temp_file: NamedTempFile,
+    }
+
+    impl TestDb {
+        pub fn new() -> Self {
+            let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+            let db = Database::new(temp_file.path()).expect("Failed to create database");
+            Self { db, temp_file }
+        }
+
+        pub fn path(&self) -> &std::path::Path {
+            self.temp_file.path()
+        }
+    }
+
+    impl Drop for TestDb {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(self.temp_file.path());
+        }
     }
 
     /// Creates a test HTTP node
-    fn create_test_http_node() -> Node {
+    pub fn http_node() -> Node {
         Node {
             id: None,
             name: "Test HTTP Node".to_string(),
@@ -314,7 +332,7 @@ mod tests {
     }
 
     /// Creates a test ping node
-    fn create_test_ping_node() -> Node {
+    pub fn ping_node() -> Node {
         Node {
             id: None,
             name: "Test Ping Node".to_string(),
@@ -330,24 +348,30 @@ mod tests {
             credential_id: None,
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{MonitorDetail, MonitoringResult, NodeStatus};
+    use chrono::Utc;
+    use test_helpers::*;
 
     #[test]
     fn test_database_creation() {
-        let (db, temp_file) = create_test_database();
-        assert!(temp_file.path().exists());
-        drop(db);
-        fs::remove_file(temp_file.path()).unwrap();
+        let test_db = TestDb::new();
+        assert!(test_db.path().exists());
     }
 
     #[test]
     fn test_add_and_get_http_node() {
-        let (db, temp_file) = create_test_database();
-        let node = create_test_http_node();
+        let test_db = TestDb::new();
+        let node = http_node();
 
-        let id = db.add_node(&node).unwrap();
+        let id = test_db.db.add_node(&node).unwrap();
         assert!(id > 0);
 
-        let nodes = db.get_all_nodes().unwrap();
+        let nodes = test_db.db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
 
         let retrieved_node = &nodes[0];
@@ -356,30 +380,27 @@ mod tests {
         assert_eq!(retrieved_node.status, NodeStatus::Online);
         assert_eq!(retrieved_node.monitoring_interval, 60);
 
-        if let MonitorDetail::Http {
-            url,
-            expected_status,
-        } = &retrieved_node.detail
-        {
-            assert_eq!(url, "https://example.com");
-            assert_eq!(*expected_status, 200);
-        } else {
-            panic!("Expected HTTP monitor detail");
+        match &retrieved_node.detail {
+            MonitorDetail::Http {
+                url,
+                expected_status,
+            } => {
+                assert_eq!(url, "https://example.com");
+                assert_eq!(*expected_status, 200);
+            }
+            _ => panic!("Expected HTTP monitor detail"),
         }
-
-        drop(db);
-        fs::remove_file(temp_file.path()).unwrap();
     }
 
     #[test]
     fn test_add_and_get_ping_node() {
-        let (db, temp_file) = create_test_database();
-        let node = create_test_ping_node();
+        let test_db = TestDb::new();
+        let node = ping_node();
 
-        let id = db.add_node(&node).unwrap();
+        let id = test_db.db.add_node(&node).unwrap();
         assert!(id > 0);
 
-        let nodes = db.get_all_nodes().unwrap();
+        let nodes = test_db.db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
 
         let retrieved_node = &nodes[0];
@@ -388,70 +409,61 @@ mod tests {
         assert_eq!(retrieved_node.status, NodeStatus::Offline);
         assert_eq!(retrieved_node.monitoring_interval, 30);
 
-        if let MonitorDetail::Ping {
-            host,
-            count,
-            timeout,
-        } = &retrieved_node.detail
-        {
-            assert_eq!(host, "192.168.1.1");
-            assert_eq!(*count, 4);
-            assert_eq!(*timeout, 5);
-        } else {
-            panic!("Expected Ping monitor detail");
+        match &retrieved_node.detail {
+            MonitorDetail::Ping {
+                host,
+                count,
+                timeout,
+            } => {
+                assert_eq!(host, "192.168.1.1");
+                assert_eq!(*count, 4);
+                assert_eq!(*timeout, 5);
+            }
+            _ => panic!("Expected Ping monitor detail"),
         }
-
-        drop(db);
-        fs::remove_file(temp_file.path()).unwrap();
     }
 
     #[test]
     fn test_update_node() {
-        let (db, temp_file) = create_test_database();
-        let mut node = create_test_http_node();
+        let test_db = TestDb::new();
+        let mut node = http_node();
 
-        let id = db.add_node(&node).unwrap();
+        let id = test_db.db.add_node(&node).unwrap();
         node.id = Some(id);
         node.name = "Updated HTTP Node".to_string();
         node.status = NodeStatus::Offline;
 
-        db.update_node(&node).unwrap();
+        test_db.db.update_node(&node).unwrap();
 
-        let nodes = db.get_all_nodes().unwrap();
+        let nodes = test_db.db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
 
         let retrieved_node = &nodes[0];
         assert_eq!(retrieved_node.name, "Updated HTTP Node");
         assert_eq!(retrieved_node.status, NodeStatus::Offline);
-
-        drop(db);
-        fs::remove_file(temp_file.path()).unwrap();
     }
 
     #[test]
     fn test_delete_node() {
-        let (db, temp_file) = create_test_database();
-        let node = create_test_http_node();
+        let test_db = TestDb::new();
+        let node = http_node();
 
-        let id = db.add_node(&node).unwrap();
+        let id = test_db.db.add_node(&node).unwrap();
 
-        let nodes = db.get_all_nodes().unwrap();
+        let nodes = test_db.db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
 
-        db.delete_node(id).unwrap();
+        test_db.db.delete_node(id).unwrap();
 
-        let nodes = db.get_all_nodes().unwrap();
+        let nodes = test_db.db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 0);
-
-        drop(db);
-        fs::remove_file(temp_file.path()).unwrap();
     }
 
     #[test]
     fn test_add_monitoring_result() {
-        let (db, temp_file) = create_test_database();
-        let node = create_test_http_node();
-        let node_id = db.add_node(&node).unwrap();
+        let test_db = TestDb::new();
+        let node = http_node();
+        let node_id = test_db.db.add_node(&node).unwrap();
 
         let result = MonitoringResult {
             id: None,
@@ -462,32 +474,26 @@ mod tests {
             details: Some("Success".to_string()),
         };
 
-        let result_id = db.add_monitoring_result(&result).unwrap();
+        let result_id = test_db.db.add_monitoring_result(&result).unwrap();
         assert!(result_id > 0);
-
-        drop(db);
-        fs::remove_file(temp_file.path()).unwrap();
     }
 
     #[test]
     fn test_multiple_nodes() {
-        let (db, temp_file) = create_test_database();
+        let test_db = TestDb::new();
 
-        let http_node = create_test_http_node();
-        let ping_node = create_test_ping_node();
+        let http = http_node();
+        let ping = ping_node();
 
-        db.add_node(&http_node).unwrap();
-        db.add_node(&ping_node).unwrap();
+        test_db.db.add_node(&http).unwrap();
+        test_db.db.add_node(&ping).unwrap();
 
-        let nodes = db.get_all_nodes().unwrap();
+        let nodes = test_db.db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 2);
 
         // Check that nodes are ordered by name
         assert_eq!(nodes[0].name, "Test HTTP Node");
         assert_eq!(nodes[1].name, "Test Ping Node");
-
-        drop(db);
-        fs::remove_file(temp_file.path()).unwrap();
     }
 
     #[test]
@@ -532,37 +538,31 @@ mod tests {
 
     #[test]
     fn test_node_with_response_time() {
-        let (db, temp_file) = create_test_database();
-        let mut node = create_test_http_node();
+        let test_db = TestDb::new();
+        let mut node = http_node();
         node.response_time = Some(250);
 
-        let _id = db.add_node(&node).unwrap();
+        let _id = test_db.db.add_node(&node).unwrap();
 
-        let nodes = db.get_all_nodes().unwrap();
+        let nodes = test_db.db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].response_time, Some(250));
-
-        drop(db);
-        fs::remove_file(temp_file.path()).unwrap();
     }
 
     #[test]
     fn test_node_with_last_check() {
-        let (db, temp_file) = create_test_database();
-        let mut node = create_test_http_node();
+        let test_db = TestDb::new();
+        let mut node = http_node();
         let now = Utc::now();
         node.last_check = Some(now);
 
-        let _id = db.add_node(&node).unwrap();
+        let _id = test_db.db.add_node(&node).unwrap();
 
-        let nodes = db.get_all_nodes().unwrap();
+        let nodes = test_db.db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
         assert!(nodes[0].last_check.is_some());
         // Allow for small time differences due to database operations
         let time_diff = (nodes[0].last_check.unwrap() - now).num_seconds().abs();
         assert!(time_diff < 5);
-
-        drop(db);
-        fs::remove_file(temp_file.path()).unwrap();
     }
 }

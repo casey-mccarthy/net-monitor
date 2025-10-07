@@ -1,162 +1,293 @@
 use net_monitor::database::Database;
 use net_monitor::models::{MonitorDetail, Node, NodeStatus};
+use std::fs;
+use std::path::PathBuf;
 use tempfile::NamedTempFile;
 
-/// Test configuration for different test scenarios
-pub struct TestConfig {
-    pub http_timeout: u64,
-    pub ping_timeout: u64,
+/// RAII test database fixture that automatically cleans up on drop
+pub struct TestDatabase {
+    pub db: Database,
+    temp_file: NamedTempFile,
 }
 
-impl Default for TestConfig {
-    fn default() -> Self {
+impl TestDatabase {
+    /// Creates a new test database with automatic cleanup
+    pub fn new() -> Self {
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let db = Database::new(temp_file.path()).expect("Failed to create database");
+        Self { db, temp_file }
+    }
+
+    /// Returns the path to the database file
+    pub fn path(&self) -> &std::path::Path {
+        self.temp_file.path()
+    }
+}
+
+impl Drop for TestDatabase {
+    fn drop(&mut self) {
+        // Database connection is dropped automatically
+        // Remove the temporary file
+        let _ = fs::remove_file(self.temp_file.path());
+    }
+}
+
+/// Builder for creating test nodes with a fluent API
+pub struct NodeBuilder {
+    name: String,
+    detail: Option<MonitorDetail>,
+    status: NodeStatus,
+    last_check: Option<chrono::DateTime<chrono::Utc>>,
+    response_time: Option<u64>,
+    monitoring_interval: u64,
+    credential_id: Option<String>,
+    id: Option<i64>,
+}
+
+impl NodeBuilder {
+    /// Creates a new node builder with default values
+    pub fn new() -> Self {
         Self {
-            http_timeout: 10,
-            ping_timeout: 5,
+            name: "Test Node".to_string(),
+            detail: None,
+            status: NodeStatus::Unknown,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 60,
+            credential_id: None,
+            id: None,
+        }
+    }
+
+    /// Sets the node name
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    /// Sets the node ID
+    pub fn id(mut self, id: i64) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    /// Configures as an HTTP node
+    pub fn http(mut self, url: impl Into<String>, expected_status: u16) -> Self {
+        self.detail = Some(MonitorDetail::Http {
+            url: url.into(),
+            expected_status,
+        });
+        self
+    }
+
+    /// Configures as a Ping node
+    pub fn ping(mut self, host: impl Into<String>, count: u32, timeout: u64) -> Self {
+        self.detail = Some(MonitorDetail::Ping {
+            host: host.into(),
+            count,
+            timeout,
+        });
+        self
+    }
+
+    /// Sets the node status
+    pub fn status(mut self, status: NodeStatus) -> Self {
+        self.status = status;
+        self
+    }
+
+    /// Sets the last check timestamp
+    pub fn last_check(mut self, timestamp: chrono::DateTime<chrono::Utc>) -> Self {
+        self.last_check = Some(timestamp);
+        self
+    }
+
+    /// Sets the response time
+    pub fn response_time(mut self, ms: u64) -> Self {
+        self.response_time = Some(ms);
+        self
+    }
+
+    /// Sets the monitoring interval
+    pub fn monitoring_interval(mut self, seconds: u64) -> Self {
+        self.monitoring_interval = seconds;
+        self
+    }
+
+    /// Sets the credential ID
+    pub fn credential_id(mut self, id: impl Into<String>) -> Self {
+        self.credential_id = Some(id.into());
+        self
+    }
+
+    /// Builds the node
+    pub fn build(self) -> Node {
+        Node {
+            id: self.id,
+            name: self.name,
+            detail: self
+                .detail
+                .expect("Node detail must be set (use .http() or .ping())"),
+            status: self.status,
+            last_check: self.last_check,
+            response_time: self.response_time,
+            monitoring_interval: self.monitoring_interval,
+            credential_id: self.credential_id,
         }
     }
 }
 
-/// Creates a temporary database for testing
-pub fn create_test_database() -> (Database, NamedTempFile) {
-    let temp_file = NamedTempFile::new().unwrap();
-    let db = Database::new(temp_file.path()).unwrap();
-    (db, temp_file)
-}
-
-/// Creates a test HTTP node with configurable parameters
-pub fn create_test_http_node(
-    name: &str,
-    url: &str,
-    expected_status: u16,
-    interval: u64,
-) -> Node {
-    Node {
-        id: None,
-        name: name.to_string(),
-        detail: MonitorDetail::Http {
-            url: url.to_string(),
-            expected_status,
-        },
-        status: NodeStatus::Unknown,
-        last_check: None,
-        response_time: None,
-        monitoring_interval: interval,
-        credential_id: None,
+impl Default for NodeBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-/// Creates a test ping node with configurable parameters
-pub fn create_test_ping_node(
-    name: &str,
-    host: &str,
-    count: u32,
-    timeout: u64,
-    interval: u64,
-) -> Node {
-    Node {
-        id: None,
-        name: name.to_string(),
-        detail: MonitorDetail::Ping {
-            host: host.to_string(),
-            count,
-            timeout,
-        },
-        status: NodeStatus::Unknown,
-        last_check: None,
-        response_time: None,
-        monitoring_interval: interval,
-        credential_id: None,
+/// Convenient fixtures for common test scenarios
+pub mod fixtures {
+    use super::*;
+
+    /// Creates a standard HTTP test node
+    pub fn http_node() -> Node {
+        NodeBuilder::new()
+            .name("Test HTTP Node")
+            .http("https://httpbin.org/status/200", 200)
+            .build()
+    }
+
+    /// Creates an HTTP node that will fail (404)
+    pub fn http_failure_node() -> Node {
+        NodeBuilder::new()
+            .name("Test HTTP Failure Node")
+            .http("https://httpbin.org/status/404", 200)
+            .build()
+    }
+
+    /// Creates a standard Ping test node
+    pub fn ping_node() -> Node {
+        NodeBuilder::new()
+            .name("Test Ping Node")
+            .ping("127.0.0.1", 1, 1)
+            .monitoring_interval(30)
+            .build()
+    }
+
+    /// Creates an HTTP node with custom URL
+    pub fn http_node_with_url(url: impl Into<String>) -> Node {
+        NodeBuilder::new()
+            .name("Custom HTTP Node")
+            .http(url, 200)
+            .build()
+    }
+
+    /// Creates a Ping node with custom host
+    pub fn ping_node_with_host(host: impl Into<String>) -> Node {
+        NodeBuilder::new()
+            .name("Custom Ping Node")
+            .ping(host, 4, 5)
+            .build()
     }
 }
 
+/// Test assertions for nodes
+pub mod assertions {
+    use super::*;
 
-/// Creates a standard test HTTP node for common testing
-pub fn create_standard_test_http_node() -> Node {
-    create_test_http_node(
-        "Standard Test HTTP Node",
-        "https://httpbin.org/status/200",
-        200,
-        60,
-    )
-}
+    /// Asserts that a node has the expected basic properties
+    pub fn assert_node_properties(node: &Node, expected_name: &str, expected_interval: u64) {
+        assert_eq!(node.name, expected_name);
+        assert_eq!(node.monitoring_interval, expected_interval);
+    }
 
-/// Creates a standard test ping node for common testing
-pub fn create_standard_test_ping_node() -> Node {
-    create_test_ping_node(
-        "Standard Test Ping Node",
-        "127.0.0.1",
-        1,
-        1,
-        30,
-    )
-}
+    /// Asserts that a node has the expected HTTP properties
+    pub fn assert_http_node(node: &Node, expected_url: &str, expected_status: u16) {
+        match &node.detail {
+            MonitorDetail::Http {
+                url,
+                expected_status: status,
+            } => {
+                assert_eq!(url, expected_url);
+                assert_eq!(*status, expected_status);
+            }
+            _ => panic!("Expected HTTP monitor detail, got {:?}", node.detail),
+        }
+    }
 
-/// Asserts that a node has the expected basic properties
-pub fn assert_node_basic_properties(node: &Node, expected_name: &str, expected_interval: u64) {
-    assert_eq!(node.name, expected_name);
-    assert_eq!(node.monitoring_interval, expected_interval);
-    assert!(node.id.is_none()); // Should be None for new nodes
-}
-
-/// Asserts that a node has the expected HTTP properties
-pub fn assert_http_node_properties(
-    node: &Node,
-    expected_url: &str,
-    expected_status: u16,
-) {
-    if let MonitorDetail::Http { url, expected_status: status } = &node.detail {
-        assert_eq!(url, expected_url);
-        assert_eq!(*status, expected_status);
-    } else {
-        panic!("Expected HTTP monitor detail");
+    /// Asserts that a node has the expected Ping properties
+    pub fn assert_ping_node(
+        node: &Node,
+        expected_host: &str,
+        expected_count: u32,
+        expected_timeout: u64,
+    ) {
+        match &node.detail {
+            MonitorDetail::Ping {
+                host,
+                count,
+                timeout,
+            } => {
+                assert_eq!(host, expected_host);
+                assert_eq!(*count, expected_count);
+                assert_eq!(*timeout, expected_timeout);
+            }
+            _ => panic!("Expected Ping monitor detail, got {:?}", node.detail),
+        }
     }
 }
-
-/// Asserts that a node has the expected ping properties
-pub fn assert_ping_node_properties(
-    node: &Node,
-    expected_host: &str,
-    expected_count: u32,
-    expected_timeout: u64,
-) {
-    if let MonitorDetail::Ping { host, count, timeout } = &node.detail {
-        assert_eq!(host, expected_host);
-        assert_eq!(*count, expected_count);
-        assert_eq!(*timeout, expected_timeout);
-    } else {
-        panic!("Expected Ping monitor detail");
-    }
-}
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_create_test_http_node() {
-        let node = create_test_http_node("Test", "https://example.com", 200, 60);
-        assert_node_basic_properties(&node, "Test", 60);
-        assert_http_node_properties(&node, "https://example.com", 200);
+    fn test_database_fixture_creates_and_cleans_up() {
+        let temp_path: PathBuf;
+        {
+            let test_db = TestDatabase::new();
+            temp_path = test_db.path().to_path_buf();
+            assert!(temp_path.exists());
+        }
+        // After drop, file should be cleaned up
+        assert!(!temp_path.exists());
     }
 
     #[test]
-    fn test_create_test_ping_node() {
-        let node = create_test_ping_node("Test", "127.0.0.1", 4, 5, 30);
-        assert_node_basic_properties(&node, "Test", 30);
-        assert_ping_node_properties(&node, "127.0.0.1", 4, 5);
-    }
+    fn test_node_builder_http() {
+        let node = NodeBuilder::new()
+            .name("Test")
+            .http("https://example.com", 200)
+            .monitoring_interval(30)
+            .build();
 
+        assert_eq!(node.name, "Test");
+        assert_eq!(node.monitoring_interval, 30);
+        assertions::assert_http_node(&node, "https://example.com", 200);
+    }
 
     #[test]
-    fn test_create_standard_test_nodes() {
-        let http_node = create_standard_test_http_node();
-        assert_node_basic_properties(&http_node, "Standard Test HTTP Node", 60);
-        assert_http_node_properties(&http_node, "https://httpbin.org/status/200", 200);
+    fn test_node_builder_ping() {
+        let node = NodeBuilder::new()
+            .name("Test Ping")
+            .ping("192.168.1.1", 4, 5)
+            .monitoring_interval(45)
+            .build();
 
-        let ping_node = create_standard_test_ping_node();
-        assert_node_basic_properties(&ping_node, "Standard Test Ping Node", 30);
-        assert_ping_node_properties(&ping_node, "127.0.0.1", 1, 1);
+        assert_eq!(node.name, "Test Ping");
+        assert_eq!(node.monitoring_interval, 45);
+        assertions::assert_ping_node(&node, "192.168.1.1", 4, 5);
     }
-} 
+
+    #[test]
+    fn test_fixtures_http_node() {
+        let node = fixtures::http_node();
+        assert_eq!(node.name, "Test HTTP Node");
+        assertions::assert_http_node(&node, "https://httpbin.org/status/200", 200);
+    }
+
+    #[test]
+    fn test_fixtures_ping_node() {
+        let node = fixtures::ping_node();
+        assert_eq!(node.name, "Test Ping Node");
+        assertions::assert_ping_node(&node, "127.0.0.1", 1, 1);
+    }
+}

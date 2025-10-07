@@ -100,6 +100,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "network-tests")]
     async fn test_check_node_http_success() {
         let node = create_test_http_node();
         let result = check_node(&node).await;
@@ -113,6 +114,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "network-tests")]
     async fn test_check_node_http_failure() {
         let node = Node {
             id: Some(1),
@@ -165,6 +167,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "network-tests")]
     async fn test_check_http_success() {
         let result = check_http("https://httpbin.org/status/200", 200).await;
         assert!(result.is_ok());
@@ -173,6 +176,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "network-tests")]
     async fn test_check_http_wrong_status() {
         let result = check_http("https://httpbin.org/status/200", 404).await;
         assert!(result.is_err());
