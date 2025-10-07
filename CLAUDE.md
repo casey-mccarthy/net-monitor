@@ -117,7 +117,37 @@ git commit -m "feat: description"
 # OR use slash command: /commit-feature
 ```
 
-#### 3. Rebase on Main Before PR
+#### 3. Pre-Push Checks (Before Creating PR)
+
+Before pushing to remote and creating a PR, run these checks locally:
+
+```bash
+# 1. Apply formatting
+cargo fmt
+
+# 2. Check formatting (verify no changes needed)
+cargo fmt -- --check
+
+# 3. Run tests
+RUSTFLAGS="-A dead_code" cargo test --all-features
+
+# 4. Run clippy
+RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warnings
+
+# 5. Run integration tests
+RUSTFLAGS="-A dead_code" cargo test --test integration_tests
+```
+
+**All-in-One Pre-Push Check:**
+```bash
+cargo fmt && \
+cargo fmt -- --check && \
+RUSTFLAGS="-A dead_code" cargo test --all-features && \
+RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warnings && \
+RUSTFLAGS="-A dead_code" cargo test --test integration_tests
+```
+
+#### 4. Rebase on Main Before PR
 ```bash
 # Fetch latest main
 git fetch origin main
@@ -133,7 +163,7 @@ git rebase --continue
 git push origin feature/branch-name --force-with-lease
 ```
 
-#### 4. Create Pull Request
+#### 5. Create Pull Request
 ```bash
 gh pr create --title "feat: description" --body "Details..."
 # OR use slash command: /prepare-pr
