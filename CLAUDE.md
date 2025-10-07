@@ -166,7 +166,6 @@ git push origin feature/branch-name --force-with-lease
 #### 5. Create Pull Request
 ```bash
 gh pr create --title "feat: description" --body "Details..."
-# OR use slash command: /prepare-pr
 ```
 
 ### Quick PR Workflow (All-in-One)

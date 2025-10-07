@@ -25,16 +25,17 @@ I'll help you create a feature branch, work on your changes, rebase on main, and
    - I help with conventional commits as you work
    - Run tests and quality checks
 
-4. **Rebase on main**
+4. **Pre-push quality checks**
+   - Apply code formatting with `cargo fmt`
+   - Verify formatting compliance
+   - Run all tests to ensure functionality
+   - Execute clippy for lint checks
+   - Run integration tests
+
+5. **Rebase on main**
    - Fetch latest main branch changes
    - Rebase your commits on top of main (linear history)
    - Handle any conflicts if they occur
-
-5. **Run integration tests**
-   - run integration tests to validate everything works
-   - correct any issues on failed tests before continuing
-   - check if tests need to be updated according to new features or fixes implemented
-
 
 6. **Create pull request**
    - Push branch to remote with tracking
@@ -96,13 +97,23 @@ Or specify the full prefix yourself:
 
 ### 4. Ready for PR
 - Say: "Ready for PR" or "Create pull request"
+- I'll run all quality checks:
+  - Apply formatting
+  - Verify formatting compliance
+  - Run all tests
+  - Run clippy
+  - Run integration tests
 - I'll rebase on main
 - Handle any conflicts with you
 - Push to remote
 
 ### 5. PR Created
 - Generate changelog from commits
-- Create PR with description
+- Create PR with comprehensive description including:
+  - Summary of changes
+  - Detailed changelog grouped by type
+  - Testing checklist
+  - Breaking changes if any
 - Provide URL for review
 
 ## Example Session:
@@ -128,7 +139,14 @@ Claude: Creating commit: "test(notifications): add email notification tests"
 
 You: Ready for PR
 
-Claude: [rebases on main]
+Claude: Running pre-push quality checks...
+        ✓ Applied formatting
+        ✓ Formatting verified
+        ✓ All tests passed
+        ✓ Clippy checks passed
+        ✓ Integration tests passed
+
+        [rebases on main]
         Rebased successfully on main
         [pushes branch]
         [creates PR]
@@ -137,8 +155,12 @@ Claude: [rebases on main]
 
         Title: feat: Add email notification system
 
-        Changes in this PR:
+        ## Changes in this PR
+
+        ### Features
         - feat(notifications): add email notification system
+
+        ### Other Changes
         - test(notifications): add email notification tests
 ```
 
@@ -154,13 +176,60 @@ git checkout -b feature/branch-name
 git add .
 git commit -m "conventional commit message"
 
-# 3. Prepare PR
+# 3. Pre-push quality checks
+cargo fmt
+cargo fmt -- --check
+RUSTFLAGS="-A dead_code" cargo test --all-features
+RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warnings
+RUSTFLAGS="-A dead_code" cargo test --test integration_tests
+
+# 4. Prepare PR
 git fetch origin main
 git rebase origin/main
 git push -u origin feature/branch-name
 
-# 4. Create PR
+# 5. Create PR
 gh pr create --title "..." --body "..."
+```
+
+## PR Description Format:
+
+The generated PR will include:
+
+```markdown
+## Summary
+
+- High-level overview of changes
+- Key points from commit messages
+
+## Changes in this PR
+
+### ⚠️ Breaking Changes
+- Any breaking changes found in commits
+
+### ✨ Features
+- feat: Add email notification system
+- feat: Implement user preferences panel
+
+### 🐛 Bug Fixes
+- fix: Resolve connection timeout issue
+- fix: Correct data validation in forms
+
+### 📚 Documentation
+- docs: Improve API documentation
+
+### 🔧 Other Changes
+- chore: Update dependencies
+- test: Add integration tests
+
+## Test plan
+
+- [ ] Manual testing completed
+- [ ] Integration tests pass
+- [ ] Unit tests pass
+- [ ] No regressions identified
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
 
 ## Benefits:
@@ -168,8 +237,10 @@ gh pr create --title "..." --body "..."
 - **Fast**: Complete workflow in one command
 - **Clean history**: Rebasing ensures linear commits
 - **Automatic changelog**: Generated from conventional commits
+- **Quality assured**: All checks run before pushing
 - **No mistakes**: Guided through each step
 - **Best practices**: Follows project conventions automatically
+- **CI-ready**: All checks that run in CI are verified locally first
 
 ## Best Practices:
 
@@ -178,6 +249,18 @@ gh pr create --title "..." --body "..."
 - Use conventional commit format (I'll help!)
 - Keep feature branches short-lived
 - Rebase regularly if working over multiple days
+
+## Quality Checks:
+
+Before pushing, the command automatically runs:
+
+1. **Formatting**: Ensures code style compliance
+2. **Tests**: Validates all functionality works
+3. **Clippy**: Catches common mistakes and anti-patterns
+4. **Integration tests**: Verifies end-to-end workflows
+5. **Format verification**: Confirms no formatting issues remain
+
+This ensures all GitHub Actions CI checks will pass.
 
 ## Conflict Resolution:
 
@@ -203,6 +286,5 @@ If you prefer more control, use individual commands:
 1. `/create-feature-branch` - Just create branch
 2. `/commit-feature` - Just commit changes
 3. `/sync-main` - Just rebase on main
-4. `/prepare-pr` - Just create PR
 
 The `/quick-pr` command combines all of these for speed!
