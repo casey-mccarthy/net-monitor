@@ -1618,7 +1618,10 @@ impl NetworkMonitorApp {
                         ui.heading("Network Monitor");
                         ui.add_space(10.0);
 
-                        ui.label(RichText::new("Version 0.2.1").strong());
+                        ui.label(
+                            RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                                .strong(),
+                        );
                         ui.add_space(5.0);
 
                         ui.label("A simple network monitoring application");

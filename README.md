@@ -155,6 +155,59 @@ cargo build --release
 
 Please see [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow and guidelines.
 
+### Claude Commands
+
+This project includes custom Claude Code commands to streamline development workflows:
+
+#### Core Workflow Commands
+
+- **`/quick-pr`** - Complete PR workflow
+  - Creates feature branch
+  - Guides through commits
+  - Runs pre-push quality checks (format, lint, tests)
+  - Rebases on main
+  - Creates pull request with changelog
+
+- **`/pre-commit-checks`** - Run all quality checks
+  - Check only (default): Reports issues without changes
+  - `--fix`: Auto-fixes formatting and lint issues
+  - `--fix-commit`: Fixes and creates conventional commit
+  - Includes: format, build, clippy, tests, security audit
+
+#### Standalone Utility Commands
+
+- **`/create-feature-branch`** - Create and switch to feature branch
+- **`/commit-feature`** - Create conventional commit
+- **`/sync-main`** - Sync feature branch with main (rebase)
+- **`/release`** - Trigger release with automated versioning
+
+#### Quick Reference
+
+```bash
+# Start working on a new feature (all-in-one)
+/quick-pr feature-name
+
+# Just run quality checks before committing
+/pre-commit-checks
+
+# Run checks and auto-fix issues
+/pre-commit-checks --fix
+
+# Run checks, fix, and commit
+/pre-commit-checks --fix-commit
+
+# Create a feature branch only
+/create-feature-branch
+
+# Sync your branch with latest main
+/sync-main
+
+# Create a conventional commit
+/commit-feature
+```
+
+See [CLAUDE.md](CLAUDE.md) for detailed workflow documentation.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
