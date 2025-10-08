@@ -287,7 +287,6 @@ mod test_helpers {
     use crate::models::{MonitorDetail, Node, NodeStatus};
     use chrono::Utc;
     use std::fs;
-    use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
     /// RAII test database fixture for unit tests

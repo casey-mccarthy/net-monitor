@@ -66,6 +66,7 @@ impl NodeBuilder {
     }
 
     /// Sets the node ID
+    #[allow(dead_code)]
     pub fn id(mut self, id: i64) -> Self {
         self.id = Some(id);
         self
@@ -91,18 +92,21 @@ impl NodeBuilder {
     }
 
     /// Sets the node status
+    #[allow(dead_code)]
     pub fn status(mut self, status: NodeStatus) -> Self {
         self.status = status;
         self
     }
 
     /// Sets the last check timestamp
+    #[allow(dead_code)]
     pub fn last_check(mut self, timestamp: chrono::DateTime<chrono::Utc>) -> Self {
         self.last_check = Some(timestamp);
         self
     }
 
     /// Sets the response time
+    #[allow(dead_code)]
     pub fn response_time(mut self, ms: u64) -> Self {
         self.response_time = Some(ms);
         self
@@ -115,6 +119,7 @@ impl NodeBuilder {
     }
 
     /// Sets the credential ID
+    #[allow(dead_code)]
     pub fn credential_id(mut self, id: impl Into<String>) -> Self {
         self.credential_id = Some(id.into());
         self
@@ -156,6 +161,7 @@ pub mod fixtures {
     }
 
     /// Creates an HTTP node that will fail (404)
+    #[allow(dead_code)]
     pub fn http_failure_node() -> Node {
         NodeBuilder::new()
             .name("Test HTTP Failure Node")
@@ -173,6 +179,7 @@ pub mod fixtures {
     }
 
     /// Creates an HTTP node with custom URL
+    #[allow(dead_code)]
     pub fn http_node_with_url(url: impl Into<String>) -> Node {
         NodeBuilder::new()
             .name("Custom HTTP Node")
@@ -181,6 +188,7 @@ pub mod fixtures {
     }
 
     /// Creates a Ping node with custom host
+    #[allow(dead_code)]
     pub fn ping_node_with_host(host: impl Into<String>) -> Node {
         NodeBuilder::new()
             .name("Custom Ping Node")
@@ -194,6 +202,7 @@ pub mod assertions {
     use super::*;
 
     /// Asserts that a node has the expected basic properties
+    #[allow(dead_code)]
     pub fn assert_node_properties(node: &Node, expected_name: &str, expected_interval: u64) {
         assert_eq!(node.name, expected_name);
         assert_eq!(node.monitoring_interval, expected_interval);
