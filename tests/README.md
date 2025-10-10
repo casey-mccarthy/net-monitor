@@ -71,6 +71,21 @@ cargo test --test database_tests
 cargo test --test monitoring_tests
 ```
 
+### Network Tests
+
+Some tests require network access to external services (like httpbin.org). These tests are **disabled by default** to prevent flaky CI failures.
+
+To run network tests locally:
+```bash
+cargo test --features network-tests
+```
+
+**Note:** Network tests are automatically excluded in CI to maintain test reliability and avoid issues with:
+- External service unavailability
+- Network timeouts
+- DNS resolution issues
+- Rate limiting
+
 ### Test Configuration
 
 The test suite supports different configurations based on environment variables:
