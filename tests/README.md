@@ -5,16 +5,18 @@ This directory contains comprehensive tests for the Net Monitor application, inc
 ## Test Structure
 
 ### Unit Tests
-Unit tests are located within each source file using `#[cfg(test)]` modules:
-- `src/models.rs` - Tests for data structures and serialization
-- `src/monitor.rs` - Tests for monitoring functionality
-- `src/database.rs` - Tests for database operations
+All unit tests have been moved to the `tests/` directory following Rust best practices:
+- `tests/models_tests.rs` - Tests for data structures and serialization (11 tests)
+- `tests/monitoring_tests.rs` - Tests for monitoring functionality (16 tests)
+- `tests/database_tests.rs` - Tests for database operations (21 tests)
+- `tests/credentials_tests.rs` - Tests for credentials module (2 tests)
 
 ### Integration Tests
-Integration tests are located in the `tests/` directory:
-- `tests/integration_tests.rs` - End-to-end workflow tests
-- `tests/common/mod.rs` - Shared test utilities
-- `tests/test_config.rs` - Test configuration management
+Integration tests are also located in the `tests/` directory:
+- `tests/database_tests.rs` - Database persistence and CRUD operations
+- `tests/monitoring_tests.rs` - End-to-end monitoring workflows
+- `tests/import_export_tests.rs` - Import/export functionality (9 tests)
+- `tests/common/mod.rs` - Shared test utilities, fixtures, and assertions
 
 ## Running Tests
 
@@ -44,23 +46,45 @@ cargo test -- --nocapture --test-threads=1
 
 #### Unit Tests
 ```bash
-# Run only unit tests (fast)
-cargo test --lib
+# Run unit tests for models
+cargo test --test models_tests
 
-# Run unit tests for specific module
-cargo test --lib models
-cargo test --lib monitor
-cargo test --lib database
+# Run unit tests for monitoring
+cargo test --test monitoring_tests
+
+# Run unit tests for database
+cargo test --test database_tests
+
+# Run unit tests for credentials
+cargo test --test credentials_tests
 ```
 
 #### Integration Tests
 ```bash
-# Run integration tests
-cargo test --test integration_tests
+# Run integration tests for import/export
+cargo test --test import_export_tests
 
-# Run integration tests with output
-cargo test --test integration_tests -- --nocapture
+# Run database integration tests
+cargo test --test database_tests
+
+# Run monitoring integration tests
+cargo test --test monitoring_tests
 ```
+
+### Network Tests
+
+Some tests require network access to external services (like httpbin.org). These tests are **disabled by default** to prevent flaky CI failures.
+
+To run network tests locally:
+```bash
+cargo test --features network-tests
+```
+
+**Note:** Network tests are automatically excluded in CI to maintain test reliability and avoid issues with:
+- External service unavailability
+- Network timeouts
+- DNS resolution issues
+- Rate limiting
 
 ### Test Configuration
 
@@ -107,34 +131,46 @@ cargo test
 
 ## Test Coverage
 
-### Models Module Tests
+### Models Module Tests (tests/models_tests.rs)
 - Data structure creation and validation
 - Serialization/deserialization (JSON)
 - Display formatting
 - Partial equality comparisons
 - Enum variant handling
+- MonitorDetail and NodeStatus types
+- Node and NodeImport creation
 
-### Monitor Module Tests
+### Monitoring Module Tests (tests/monitoring_tests.rs)
 - HTTP monitoring (success and failure cases)
 - Ping monitoring (localhost and invalid hosts)
 - Response time measurement
 - Error handling and propagation
 - Async/await functionality
+- Network tests (with feature flag)
+- Concurrent monitoring operations
+- Full monitoring workflows
 
-### Database Module Tests
+### Database Module Tests (tests/database_tests.rs)
 - Database creation and initialization
 - CRUD operations (Create, Read, Update, Delete)
-- Node storage and retrieval
+- Node storage and retrieval (HTTP and Ping nodes)
 - Monitoring result storage
 - Database persistence across connections
 - Error handling for invalid data
-- Concurrent access patterns
+- Node status parsing
+- Response time and last check handling
+
+### Credentials Module Tests (tests/credentials_tests.rs)
+- SensitiveString creation and usage
+- SSH credential types (Default, Password, Key)
+- Username extraction from credentials
+- Secret requirement checking
 
 ### Integration Tests
 - Complete monitoring workflows
 - Database persistence across sessions
 - Concurrent monitoring operations
-- Import/export functionality
+- Import/export functionality (tests/import_export_tests.rs)
 - Error recovery scenarios
 - End-to-end application flows
 
@@ -143,20 +179,23 @@ cargo test
 ### Common Test Functions
 Located in `tests/common/mod.rs`:
 
-- `create_test_database()` - Creates temporary test database
-- `create_test_http_node()` - Creates HTTP test node
-- `create_test_ping_node()` - Creates ping test node
-- `assert_node_basic_properties()` - Validates node properties
-- `assert_http_node_properties()` - Validates HTTP node details
-- `assert_ping_node_properties()` - Validates ping node details
+**Test Database Fixture:**
+- `TestDatabase` - RAII test database fixture with automatic cleanup
 
-### Test Configuration
-Located in `tests/test_config.rs`:
+**Node Builders:**
+- `NodeBuilder` - Fluent API for creating test nodes
+- Builder methods: `.name()`, `.http()`, `.ping()`, `.monitoring_interval()`
 
-- `TestEnvironment` - Environment-specific test settings
-- `TestConfig` - Overall test configuration
-- Environment variable parsing
-- CI-friendly configurations
+**Fixtures (in `fixtures` module):**
+- `http_node()` - Standard HTTP test node (httpbin.org/status/200)
+- `http_failure_node()` - HTTP node that returns 404
+- `ping_node()` - Standard Ping test node (127.0.0.1)
+- `unit_test_http_node()` - HTTP node for unit tests (example.com)
+- `unit_test_ping_node()` - Ping node for unit tests
+
+**Assertions (in `assertions` module):**
+- `assert_http_node()` - Validates HTTP node properties
+- `assert_ping_node()` - Validates ping node properties
 
 ## Test Data
 
@@ -180,10 +219,10 @@ Located in `tests/test_config.rs`:
 6. **Use test utilities** from `common/mod.rs` for consistency
 
 ### Test Organization
-1. **Unit tests** go in the source files with `#[cfg(test)]`
-2. **Integration tests** go in the `tests/` directory
+1. **Unit tests** are now in the `tests/` directory (following Rust best practices)
+2. **Integration tests** are also in the `tests/` directory
 3. **Shared utilities** go in `tests/common/mod.rs`
-4. **Configuration** goes in `tests/test_config.rs`
+4. **Test fixtures and assertions** are organized in submodules within `common/mod.rs`
 
 ### Performance Considerations
 1. **Use temporary files** for database tests

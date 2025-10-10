@@ -21,19 +21,23 @@ cargo clean && cargo build --release
 
 ## Test Commands
 
-### Run All Tests (No Warnings, Skip Network Tests)
+### Run All Tests (Excludes Network Tests)
 ```bash
-RUSTFLAGS="-A dead_code" cargo test --all-features
+RUSTFLAGS="-A dead_code" cargo test
 ```
 
-### Run All Tests Including Network Tests (Local Development)
+**Note:** Network tests are excluded by default to avoid flaky CI failures due to external service dependencies.
+
+### Run All Tests Including Network Tests (Local Development Only)
 ```bash
-RUSTFLAGS="-A dead_code" cargo test --all-features --features network-tests
+RUSTFLAGS="-A dead_code" cargo test --features network-tests
 ```
+
+**Important:** Only run network tests locally. They are automatically excluded in CI.
 
 ### Run Tests with Output
 ```bash
-RUSTFLAGS="-A dead_code" cargo test --all-features -- --nocapture
+RUSTFLAGS="-A dead_code" cargo test -- --nocapture
 ```
 
 ### Run Integration Tests Only
