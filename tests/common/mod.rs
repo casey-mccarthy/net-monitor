@@ -143,7 +143,6 @@ pub mod fixtures {
             .monitoring_interval(30)
             .build()
     }
-
 }
 
 /// Test assertions for nodes
