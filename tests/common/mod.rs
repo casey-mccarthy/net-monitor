@@ -116,6 +116,7 @@ impl Default for NodeBuilder {
 /// Convenient fixtures for common test scenarios
 pub mod fixtures {
     use super::*;
+    use chrono::Utc;
 
     /// Creates a standard HTTP test node
     pub fn http_node() -> Node {
@@ -127,7 +128,7 @@ pub mod fixtures {
 
     /// Creates an HTTP node that will fail (404)
     /// Used in network tests which are ignored by default
-    #[cfg_attr(not(feature = "network-tests"), allow(dead_code))]
+    #[allow(dead_code)]
     pub fn http_failure_node() -> Node {
         NodeBuilder::new()
             .name("Test HTTP Failure Node")
@@ -142,6 +143,44 @@ pub mod fixtures {
             .ping("127.0.0.1", 1, 1)
             .monitoring_interval(30)
             .build()
+    }
+
+    /// Creates a test HTTP node with example.com URL for unit tests
+    /// Similar to http_node() but uses example.com for non-network tests
+    #[allow(dead_code)]
+    pub fn unit_test_http_node() -> Node {
+        Node {
+            id: None,
+            name: "Test HTTP Node".to_string(),
+            detail: MonitorDetail::Http {
+                url: "https://example.com".to_string(),
+                expected_status: 200,
+            },
+            status: NodeStatus::Online,
+            last_check: Some(Utc::now()),
+            response_time: Some(150),
+            monitoring_interval: 60,
+            credential_id: None,
+        }
+    }
+
+    /// Creates a test ping node for unit tests
+    #[allow(dead_code)]
+    pub fn unit_test_ping_node() -> Node {
+        Node {
+            id: None,
+            name: "Test Ping Node".to_string(),
+            detail: MonitorDetail::Ping {
+                host: "192.168.1.1".to_string(),
+                count: 4,
+                timeout: 5,
+            },
+            status: NodeStatus::Offline,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 30,
+            credential_id: None,
+        }
     }
 }
 

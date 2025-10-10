@@ -1,7 +1,8 @@
 mod common;
 
+use chrono::Utc;
 use common::{fixtures, NodeBuilder, TestDatabase};
-use net_monitor::models::NodeStatus;
+use net_monitor::models::{MonitorDetail, Node, NodeStatus};
 use net_monitor::monitor::check_node;
 
 #[tokio::test]
@@ -188,4 +189,156 @@ async fn test_monitoring_invalid_url() {
     assert_eq!(result.status, NodeStatus::Offline);
     assert!(result.response_time.is_some());
     assert!(result.details.is_some());
+}
+
+// ============================================================================
+// Unit tests moved from src/monitor.rs
+// ============================================================================
+
+/// Helper function to create a test HTTP node for testing purposes
+fn create_test_http_node() -> Node {
+    Node {
+        id: Some(1),
+        name: "Test HTTP Node".to_string(),
+        detail: MonitorDetail::Http {
+            url: "https://httpbin.org/status/200".to_string(),
+            expected_status: 200,
+        },
+        status: NodeStatus::Unknown,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    }
+}
+
+#[tokio::test]
+#[cfg(feature = "network-tests")]
+async fn test_check_node_http_success() {
+    let node = create_test_http_node();
+    let result = check_node(&node).await;
+
+    assert!(result.is_ok());
+    let monitoring_result = result.unwrap();
+    assert_eq!(monitoring_result.node_id, 1);
+    assert_eq!(monitoring_result.status, NodeStatus::Online);
+    assert!(monitoring_result.response_time.is_some());
+    assert!(monitoring_result.details.is_some());
+}
+
+#[tokio::test]
+#[cfg(feature = "network-tests")]
+async fn test_check_node_http_failure() {
+    let node = Node {
+        id: Some(1),
+        name: "Test HTTP Node".to_string(),
+        detail: MonitorDetail::Http {
+            url: "https://httpbin.org/status/404".to_string(),
+            expected_status: 200, // Expecting 200 but will get 404
+        },
+        status: NodeStatus::Unknown,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    };
+
+    let result = check_node(&node).await;
+
+    assert!(result.is_ok());
+    let monitoring_result = result.unwrap();
+    assert_eq!(monitoring_result.node_id, 1);
+    assert_eq!(monitoring_result.status, NodeStatus::Offline);
+    assert!(monitoring_result.response_time.is_some());
+    assert!(monitoring_result.details.is_some());
+}
+
+#[tokio::test]
+async fn test_check_node_invalid_url() {
+    let node = Node {
+        id: Some(1),
+        name: "Test HTTP Node".to_string(),
+        detail: MonitorDetail::Http {
+            url: "https://invalid-domain-that-does-not-exist-12345.com".to_string(),
+            expected_status: 200,
+        },
+        status: NodeStatus::Unknown,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    };
+
+    let result = check_node(&node).await;
+
+    assert!(result.is_ok());
+    let monitoring_result = result.unwrap();
+    assert_eq!(monitoring_result.node_id, 1);
+    assert_eq!(monitoring_result.status, NodeStatus::Offline);
+    assert!(monitoring_result.response_time.is_some());
+    assert!(monitoring_result.details.is_some());
+}
+
+// Note: Tests for check_http and check_ping were removed because these are
+// private functions. Their functionality is tested through check_node tests.
+
+#[test]
+fn test_monitoring_result_structure() {
+    let node = create_test_http_node();
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(check_node(&node))
+        .unwrap();
+
+    assert_eq!(result.node_id, 1);
+    assert!(result.timestamp > Utc::now() - chrono::Duration::seconds(10));
+    assert!(result.response_time.is_some());
+    assert!(result.response_time.unwrap() > 0);
+}
+
+#[tokio::test]
+async fn test_check_node_with_none_id() {
+    let mut node = create_test_http_node();
+    node.id = None;
+
+    let result = check_node(&node).await;
+    assert!(result.is_ok());
+    let monitoring_result = result.unwrap();
+    assert_eq!(monitoring_result.node_id, 0); // Default value when id is None
+}
+
+#[test]
+fn test_monitor_detail_variants() {
+    let http_detail = MonitorDetail::Http {
+        url: "https://example.com".to_string(),
+        expected_status: 200,
+    };
+    match http_detail {
+        MonitorDetail::Http {
+            url,
+            expected_status,
+        } => {
+            assert_eq!(url, "https://example.com");
+            assert_eq!(expected_status, 200);
+        }
+        _ => panic!("Expected HTTP variant"),
+    }
+
+    let ping_detail = MonitorDetail::Ping {
+        host: "192.168.1.1".to_string(),
+        count: 4,
+        timeout: 5,
+    };
+    match ping_detail {
+        MonitorDetail::Ping {
+            host,
+            count,
+            timeout,
+        } => {
+            assert_eq!(host, "192.168.1.1");
+            assert_eq!(count, 4);
+            assert_eq!(timeout, 5);
+        }
+        _ => panic!("Expected Ping variant"),
+    }
 }

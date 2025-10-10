@@ -27,7 +27,10 @@
       "Bash(RUSTFLAGS=\"-A dead_code\" cargo test --test integration_tests)",
       "Bash(git push:*)",
       "Bash(gh pr create:*)",
-      "Bash(set RUSTFLAGS=-A dead_code)"
+      "Bash(set RUSTFLAGS=-A dead_code)",
+      "Bash(gh pr edit:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh run view:*)"
     ],
     "deny": [],
     "ask": []
