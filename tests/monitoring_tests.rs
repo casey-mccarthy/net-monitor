@@ -213,7 +213,7 @@ fn create_test_http_node() -> Node {
 }
 
 #[tokio::test]
-#[cfg_attr(not(feature = "network-tests"), ignore)]
+#[cfg(feature = "network-tests")]
 async fn test_check_node_http_success() {
     let node = create_test_http_node();
     let result = check_node(&node).await;
@@ -227,7 +227,7 @@ async fn test_check_node_http_success() {
 }
 
 #[tokio::test]
-#[cfg_attr(not(feature = "network-tests"), ignore)]
+#[cfg(feature = "network-tests")]
 async fn test_check_node_http_failure() {
     let node = Node {
         id: Some(1),
