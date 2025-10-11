@@ -489,14 +489,15 @@ fn test_calculate_uptime_percentage() {
     let start_time = Utc::now() - Duration::seconds(1000);
     let end_time = Utc::now();
 
-    // No status changes - should return 0%
+    // No status changes - should return 100% (assumes node is online)
     let uptime = test_db
         .db
         .calculate_uptime_percentage(node_id, start_time, end_time)
         .unwrap();
-    assert_eq!(uptime, 0.0);
+    assert_eq!(uptime, 100.0);
 
-    // Add status changes: Online for 400s, Offline for 300s, Online again for 300s
+    // Add status changes: Offline for 300s in the middle
+    // Timeline: Online (400s) -> Offline (300s) -> Online (300s)
     let changes = vec![
         StatusChange {
             id: None,
@@ -528,13 +529,13 @@ fn test_calculate_uptime_percentage() {
         test_db.db.add_status_change(change).unwrap();
     }
 
-    // Uptime should be (400s + 300s) / 1000s = 70%
+    // Uptime should be 100% - (300s offline / 1000s total * 100%) = 70%
     let uptime = test_db
         .db
         .calculate_uptime_percentage(node_id, start_time, end_time)
         .unwrap();
     // Allow for small variance
-    assert!((uptime - 70.0).abs() < 1.0);
+    assert!((uptime - 70.0).abs() < 1.0, "Expected ~70%, got {}", uptime);
 }
 
 #[test]

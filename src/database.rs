@@ -339,6 +339,11 @@ impl Database {
 
     /// Calculate uptime percentage over a time period
     /// Returns percentage (0.0 - 100.0) of time the node was Online
+    ///
+    /// Starts at 100% and decrements based on time spent offline.
+    /// This provides a more realistic representation for newly added nodes:
+    /// - No status changes = 100% uptime (assumed online)
+    /// - With outages = 100% - (offline_time / total_period * 100%)
     pub fn calculate_uptime_percentage(
         &self,
         node_id: i64,
@@ -378,36 +383,35 @@ impl Database {
             )?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
+        // If no status changes, assume 100% uptime (node is online)
         if changes.is_empty() {
-            return Ok(0.0);
+            return Ok(100.0);
         }
 
         let total_duration = StatusChange::calculate_duration(start_time, end_time);
-        let mut online_duration = 0i64;
+        let mut offline_duration = 0i64;
 
-        for (i, change) in changes.iter().enumerate() {
-            if change.from_status == NodeStatus::Online {
+        // Calculate time spent offline by summing duration_ms for all Offline periods
+        for change in &changes {
+            if change.from_status == NodeStatus::Offline {
                 if let Some(duration) = change.duration_ms {
-                    online_duration += duration;
-                } else if i + 1 < changes.len() {
-                    // Calculate duration to next change
-                    let next_change = &changes[i + 1];
-                    online_duration +=
-                        StatusChange::calculate_duration(change.changed_at, next_change.changed_at);
+                    offline_duration += duration;
                 }
             }
         }
 
-        // Handle the last status if it was Online
+        // Handle the last status if it was Offline (node is currently offline)
         if let Some(last_change) = changes.last() {
-            if last_change.to_status == NodeStatus::Online {
-                online_duration +=
+            if last_change.to_status == NodeStatus::Offline {
+                offline_duration +=
                     StatusChange::calculate_duration(last_change.changed_at, end_time);
             }
         }
 
-        let percentage = (online_duration as f64 / total_duration as f64) * 100.0;
-        Ok(percentage.clamp(0.0, 100.0))
+        // Calculate uptime as 100% minus the percentage of time spent offline
+        let offline_percentage = (offline_duration as f64 / total_duration as f64) * 100.0;
+        let uptime_percentage = 100.0 - offline_percentage;
+        Ok(uptime_percentage.clamp(0.0, 100.0))
     }
 
     /// Converts a database row to a Node struct
