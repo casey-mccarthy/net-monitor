@@ -86,6 +86,9 @@ impl Database {
         // Add credential_id column to existing nodes table if it doesn't exist
         self.migrate_credential_column(&conn)?;
 
+        // Migrate Unknown status to Offline
+        self.migrate_unknown_status(&conn)?;
+
         Ok(())
     }
 
@@ -103,6 +106,51 @@ impl Database {
         if !column_exists {
             conn.execute("ALTER TABLE nodes ADD COLUMN credential_id TEXT", [])?;
             info!("Added credential_id column to nodes table");
+        }
+
+        Ok(())
+    }
+
+    /// Migrate Unknown status to Offline in existing data
+    fn migrate_unknown_status(&self, conn: &Connection) -> Result<()> {
+        // Update nodes table
+        let nodes_updated = conn.execute(
+            "UPDATE nodes SET status = 'Offline' WHERE status = 'Unknown'",
+            [],
+        )?;
+        if nodes_updated > 0 {
+            info!(
+                "Migrated {} node(s) from Unknown to Offline status",
+                nodes_updated
+            );
+        }
+
+        // Update monitoring_results table
+        let results_updated = conn.execute(
+            "UPDATE monitoring_results SET status = 'Offline' WHERE status = 'Unknown'",
+            [],
+        )?;
+        if results_updated > 0 {
+            info!(
+                "Migrated {} monitoring result(s) from Unknown to Offline status",
+                results_updated
+            );
+        }
+
+        // Update status_changes table
+        let from_updated = conn.execute(
+            "UPDATE status_changes SET from_status = 'Offline' WHERE from_status = 'Unknown'",
+            [],
+        )?;
+        let to_updated = conn.execute(
+            "UPDATE status_changes SET to_status = 'Offline' WHERE to_status = 'Unknown'",
+            [],
+        )?;
+        if from_updated > 0 || to_updated > 0 {
+            info!(
+                "Migrated {} status change(s) from Unknown to Offline",
+                from_updated + to_updated
+            );
         }
 
         Ok(())
@@ -321,8 +369,8 @@ impl Database {
                     Ok(StatusChange {
                         id: None,
                         node_id,
-                        from_status: from_status.parse().unwrap_or(NodeStatus::Unknown),
-                        to_status: to_status.parse().unwrap_or(NodeStatus::Unknown),
+                        from_status: from_status.parse().unwrap_or(NodeStatus::Offline),
+                        to_status: to_status.parse().unwrap_or(NodeStatus::Offline),
                         changed_at,
                         duration_ms,
                     })
@@ -376,7 +424,7 @@ impl Database {
             id: row.get("id")?,
             name: row.get("name")?,
             detail,
-            status: status.parse().unwrap_or(NodeStatus::Unknown),
+            status: status.parse().unwrap_or(NodeStatus::Offline),
             last_check,
             response_time: row.get("response_time")?,
             monitoring_interval: row.get("monitoring_interval")?,
@@ -400,8 +448,8 @@ impl Database {
         Ok(StatusChange {
             id: row.get("id")?,
             node_id: row.get("node_id")?,
-            from_status: from_status.parse().unwrap_or(NodeStatus::Unknown),
-            to_status: to_status.parse().unwrap_or(NodeStatus::Unknown),
+            from_status: from_status.parse().unwrap_or(NodeStatus::Offline),
+            to_status: to_status.parse().unwrap_or(NodeStatus::Offline),
             changed_at,
             duration_ms: row.get("duration_ms")?,
         })
@@ -473,7 +521,7 @@ impl std::str::FromStr for NodeStatus {
         match s {
             "Online" => Ok(NodeStatus::Online),
             "Offline" => Ok(NodeStatus::Offline),
-            _ => Ok(NodeStatus::Unknown),
+            _ => Ok(NodeStatus::Offline), // Default to Offline for unknown strings
         }
     }
 }

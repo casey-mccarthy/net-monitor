@@ -287,13 +287,14 @@ fn test_node_status_parsing() {
         "Offline".parse::<NodeStatus>().unwrap(),
         NodeStatus::Offline
     );
+    // Unknown and invalid strings default to Offline
     assert_eq!(
         "Unknown".parse::<NodeStatus>().unwrap(),
-        NodeStatus::Unknown
+        NodeStatus::Offline
     );
     assert_eq!(
         "Invalid".parse::<NodeStatus>().unwrap(),
-        NodeStatus::Unknown
+        NodeStatus::Offline
     );
 }
 
@@ -341,7 +342,7 @@ fn test_add_status_change() {
     let status_change = StatusChange {
         id: None,
         node_id,
-        from_status: NodeStatus::Unknown,
+        from_status: NodeStatus::Offline,
         to_status: NodeStatus::Online,
         changed_at: Utc::now(),
         duration_ms: None,
@@ -363,7 +364,7 @@ fn test_get_status_changes() {
         StatusChange {
             id: None,
             node_id,
-            from_status: NodeStatus::Unknown,
+            from_status: NodeStatus::Offline,
             to_status: NodeStatus::Online,
             changed_at: now - Duration::seconds(300),
             duration_ms: None,
@@ -419,7 +420,7 @@ fn test_get_latest_status_change() {
     let status_change = StatusChange {
         id: None,
         node_id,
-        from_status: NodeStatus::Unknown,
+        from_status: NodeStatus::Offline,
         to_status: NodeStatus::Online,
         changed_at: now,
         duration_ms: None,
@@ -464,7 +465,7 @@ fn test_get_current_status_duration() {
     let status_change = StatusChange {
         id: None,
         node_id,
-        from_status: NodeStatus::Unknown,
+        from_status: NodeStatus::Offline,
         to_status: NodeStatus::Online,
         changed_at,
         duration_ms: None,
@@ -500,7 +501,7 @@ fn test_calculate_uptime_percentage() {
         StatusChange {
             id: None,
             node_id,
-            from_status: NodeStatus::Unknown,
+            from_status: NodeStatus::Offline,
             to_status: NodeStatus::Online,
             changed_at: start_time,
             duration_ms: None,
@@ -608,7 +609,7 @@ fn test_status_changes_cascade_delete() {
     let status_change = StatusChange {
         id: None,
         node_id,
-        from_status: NodeStatus::Unknown,
+        from_status: NodeStatus::Offline,
         to_status: NodeStatus::Online,
         changed_at: Utc::now(),
         duration_ms: None,

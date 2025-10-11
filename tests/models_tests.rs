@@ -44,7 +44,6 @@ fn test_monitor_detail_serialization() {
 fn test_node_status_display() {
     assert_eq!(NodeStatus::Online.to_string(), "Online");
     assert_eq!(NodeStatus::Offline.to_string(), "Offline");
-    assert_eq!(NodeStatus::Unknown.to_string(), "Unknown");
 }
 
 #[test]
@@ -186,5 +185,5 @@ fn test_monitor_detail_partial_eq() {
 fn test_node_status_partial_eq() {
     assert_eq!(NodeStatus::Online, NodeStatus::Online);
     assert_ne!(NodeStatus::Online, NodeStatus::Offline);
-    assert_ne!(NodeStatus::Online, NodeStatus::Unknown);
+    assert_eq!(NodeStatus::Offline, NodeStatus::Offline);
 }

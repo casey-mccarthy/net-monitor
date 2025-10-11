@@ -53,8 +53,6 @@ pub enum NodeStatus {
     Online,
     /// Node is offline or not responding
     Offline,
-    /// Status is unknown (e.g., monitoring disabled)
-    Unknown,
 }
 
 impl fmt::Display for NodeStatus {
@@ -62,7 +60,6 @@ impl fmt::Display for NodeStatus {
         match self {
             NodeStatus::Online => write!(f, "Online"),
             NodeStatus::Offline => write!(f, "Offline"),
-            NodeStatus::Unknown => write!(f, "Unknown"),
         }
     }
 }
@@ -146,8 +143,6 @@ impl StatusChange {
         matches!(
             (self.from_status, self.to_status),
             (NodeStatus::Online, NodeStatus::Offline)
-                | (NodeStatus::Online, NodeStatus::Unknown)
-                | (NodeStatus::Unknown, NodeStatus::Offline)
         )
     }
 
@@ -156,8 +151,6 @@ impl StatusChange {
         matches!(
             (self.from_status, self.to_status),
             (NodeStatus::Offline, NodeStatus::Online)
-                | (NodeStatus::Unknown, NodeStatus::Online)
-                | (NodeStatus::Offline, NodeStatus::Unknown)
         )
     }
 

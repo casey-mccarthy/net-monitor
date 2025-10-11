@@ -394,7 +394,6 @@ impl NetworkMonitorApp {
                         let status_color = match node.status {
                             NodeStatus::Online => Color32::GREEN,
                             NodeStatus::Offline => Color32::RED,
-                            NodeStatus::Unknown => Color32::YELLOW,
                         };
                         ui.colored_label(status_color, node.status.to_string());
 
@@ -612,7 +611,7 @@ impl NetworkMonitorApp {
                     id: None,
                     name: form.name.clone(),
                     detail,
-                    status: NodeStatus::Unknown,
+                    status: NodeStatus::Offline,
                     last_check: None,
                     response_time: None,
                     monitoring_interval: form.monitoring_interval.parse().unwrap_or(5),
@@ -926,7 +925,12 @@ impl NetworkMonitorApp {
 
         let thread = thread::spawn(move || {
             let mut last_check_times: HashMap<i64, Instant> = HashMap::new();
-            let mut previous_statuses: HashMap<i64, NodeStatus> = HashMap::new();
+            // Initialize previous_statuses with all nodes starting as Offline
+            // This ensures first successful check will be Offline → Online and get recorded
+            let mut previous_statuses: HashMap<i64, NodeStatus> = initial_nodes
+                .iter()
+                .filter_map(|n| n.id.map(|id| (id, NodeStatus::Offline)))
+                .collect();
             let mut last_status_change_times: HashMap<i64, chrono::DateTime<Utc>> = HashMap::new();
             let mut current_nodes = initial_nodes.clone();
             let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -938,6 +942,10 @@ impl NetworkMonitorApp {
                         NodeConfigUpdate::Add(node) => {
                             info!("Adding new node to monitoring: {}", node.name);
                             if !current_nodes.iter().any(|n| n.id == node.id) {
+                                // Initialize new node's previous status as Offline
+                                if let Some(node_id) = node.id {
+                                    previous_statuses.insert(node_id, NodeStatus::Offline);
+                                }
                                 current_nodes.push(node);
                             }
                         }
@@ -1003,9 +1011,6 @@ impl NetworkMonitorApp {
                                     NodeStatus::Offline => {
                                         info!("Node '{}' checked - Status: DOWN", node.name);
                                     }
-                                    NodeStatus::Unknown => {
-                                        info!("Node '{}' checked - Status: UNKNOWN", node.name);
-                                    }
                                 }
 
                                 // Log status changes and record in database
@@ -1021,30 +1026,6 @@ impl NetworkMonitorApp {
                                             (NodeStatus::Offline, NodeStatus::Online) => {
                                                 info!(
                                                     "RECOVERY: Node '{}' is back UP (was DOWN)",
-                                                    node.name
-                                                );
-                                            }
-                                            (NodeStatus::Unknown, NodeStatus::Online) => {
-                                                info!(
-                                                    "Node '{}' is now UP (was UNKNOWN)",
-                                                    node.name
-                                                );
-                                            }
-                                            (NodeStatus::Unknown, NodeStatus::Offline) => {
-                                                error!(
-                                                    "Node '{}' is now DOWN (was UNKNOWN)",
-                                                    node.name
-                                                );
-                                            }
-                                            (NodeStatus::Online, NodeStatus::Unknown) => {
-                                                error!(
-                                                    "Node '{}' status is now UNKNOWN (was UP)",
-                                                    node.name
-                                                );
-                                            }
-                                            (NodeStatus::Offline, NodeStatus::Unknown) => {
-                                                error!(
-                                                    "Node '{}' status is now UNKNOWN (was DOWN)",
                                                     node.name
                                                 );
                                             }
@@ -1159,7 +1140,7 @@ impl NetworkMonitorApp {
                                 id: None,
                                 name: import.name,
                                 detail: import.detail,
-                                status: NodeStatus::Unknown,
+                                status: NodeStatus::Offline,
                                 last_check: None,
                                 response_time: None,
                                 monitoring_interval: import.monitoring_interval,
@@ -1759,7 +1740,6 @@ impl NetworkMonitorApp {
                                 let status_color = match node.status {
                                     NodeStatus::Online => Color32::GREEN,
                                     NodeStatus::Offline => Color32::RED,
-                                    NodeStatus::Unknown => Color32::YELLOW,
                                 };
                                 ui.colored_label(status_color, node.status.to_string());
                             });
@@ -1862,7 +1842,6 @@ impl NetworkMonitorApp {
                                                     let from_color = match change.from_status {
                                                         NodeStatus::Online => Color32::GREEN,
                                                         NodeStatus::Offline => Color32::RED,
-                                                        NodeStatus::Unknown => Color32::YELLOW,
                                                     };
                                                     ui.colored_label(
                                                         from_color,
@@ -1873,7 +1852,6 @@ impl NetworkMonitorApp {
                                                     let to_color = match change.to_status {
                                                         NodeStatus::Online => Color32::GREEN,
                                                         NodeStatus::Offline => Color32::RED,
-                                                        NodeStatus::Unknown => Color32::YELLOW,
                                                     };
                                                     ui.colored_label(
                                                         to_color,
