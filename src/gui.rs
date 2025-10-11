@@ -182,6 +182,8 @@ pub struct NetworkMonitorApp {
     editing_credential: Option<String>,
     new_credential_form: CredentialForm,
     pending_credential_action: Option<CredentialAction>,
+    // Status change history
+    show_status_history: Option<i64>, // Node ID whose history to show
 }
 
 struct MonitoringHandle {
@@ -231,6 +233,7 @@ impl NetworkMonitorApp {
             editing_credential: None,
             new_credential_form: CredentialForm::default(),
             pending_credential_action: None,
+            show_status_history: None,
         })
     }
 }
@@ -263,6 +266,7 @@ impl eframe::App for NetworkMonitorApp {
         self.show_credentials_window(ctx);
         self.show_add_credential_window(ctx);
         self.show_about_window(ctx);
+        self.show_status_history_window(ctx);
 
         // Process pending credential actions
         self.process_pending_credential_action();
@@ -446,6 +450,9 @@ impl NetworkMonitorApp {
                         }
 
                         ui.horizontal(|ui| {
+                            if ui.button("History").clicked() {
+                                action = Some(NodeAction::ViewHistory(i));
+                            }
                             if ui.button("Edit").clicked() {
                                 action = Some(NodeAction::Edit(i));
                             }
@@ -684,6 +691,13 @@ impl NetworkMonitorApp {
                         } else {
                             error!("Failed to delete node with id {}", id);
                         }
+                    }
+                }
+            }
+            NodeAction::ViewHistory(index) => {
+                if let Some(node) = self.nodes.get(index) {
+                    if let Some(id) = node.id {
+                        self.show_status_history = Some(id);
                     }
                 }
             }
@@ -1691,12 +1705,219 @@ impl NetworkMonitorApp {
             }
         }
     }
+
+    fn show_status_history_window(&mut self, ctx: &egui::Context) {
+        if let Some(node_id) = self.show_status_history {
+            let mut is_open = true;
+
+            // Find the node name
+            let node_name = self
+                .nodes
+                .iter()
+                .find(|n| n.id == Some(node_id))
+                .map(|n| n.name.clone())
+                .unwrap_or_else(|| format!("Node {}", node_id));
+
+            egui::Window::new(format!("Status History - {}", node_name))
+                .resizable(true)
+                .collapsible(false)
+                .default_width(700.0)
+                .default_height(500.0)
+                .open(&mut is_open)
+                .show(ctx, |ui| {
+                    ui.vertical(|ui| {
+                        // Current Status Section
+                        ui.heading("Current Status");
+                        ui.add_space(5.0);
+
+                        if let Some(node) = self.nodes.iter().find(|n| n.id == Some(node_id)) {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Status:").strong());
+                                let status_color = match node.status {
+                                    NodeStatus::Online => Color32::GREEN,
+                                    NodeStatus::Offline => Color32::RED,
+                                    NodeStatus::Unknown => Color32::YELLOW,
+                                };
+                                ui.colored_label(status_color, node.status.to_string());
+                            });
+
+                            if let Some(last_check) = node.last_check {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("Last Check:").strong());
+                                    ui.label(
+                                        last_check
+                                            .with_timezone(&chrono::Local)
+                                            .format("%Y-%m-%d %H:%M:%S")
+                                            .to_string(),
+                                    );
+                                });
+                            }
+
+                            // Time in current status
+                            if let Ok(Some(duration_ms)) =
+                                self.database.get_current_status_duration(node_id)
+                            {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("Time in Current Status:").strong());
+                                    ui.label(format_duration(duration_ms));
+                                });
+                            }
+                        }
+
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(10.0);
+
+                        // Uptime Statistics Section
+                        ui.heading("Uptime Statistics");
+                        ui.add_space(5.0);
+
+                        // Calculate uptime for different time periods
+                        let now = Utc::now();
+                        let periods = vec![
+                            ("Last 24 Hours", now - chrono::Duration::hours(24)),
+                            ("Last 7 Days", now - chrono::Duration::days(7)),
+                            ("Last 30 Days", now - chrono::Duration::days(30)),
+                        ];
+
+                        for (label, start_time) in periods {
+                            if let Ok(uptime_pct) = self
+                                .database
+                                .calculate_uptime_percentage(node_id, start_time, now)
+                            {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(format!("{}:", label)).strong());
+                                    let color = if uptime_pct >= 99.0 {
+                                        Color32::GREEN
+                                    } else if uptime_pct >= 95.0 {
+                                        Color32::YELLOW
+                                    } else {
+                                        Color32::RED
+                                    };
+                                    ui.colored_label(color, format!("{:.2}%", uptime_pct));
+                                });
+                            }
+                        }
+
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(10.0);
+
+                        // Status Change History Section
+                        ui.heading("Status Change History");
+                        ui.add_space(5.0);
+
+                        // Fetch status changes
+                        match self.database.get_status_changes(node_id, Some(50)) {
+                            Ok(changes) => {
+                                if changes.is_empty() {
+                                    ui.label("No status changes recorded yet.");
+                                } else {
+                                    ScrollArea::vertical().show(ui, |ui| {
+                                        Grid::new("status_change_grid")
+                                            .num_columns(4)
+                                            .spacing([15.0, 8.0])
+                                            .striped(true)
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new("Timestamp").strong());
+                                                ui.label(RichText::new("From").strong());
+                                                ui.label(RichText::new("To").strong());
+                                                ui.label(RichText::new("Duration").strong());
+                                                ui.end_row();
+
+                                                for change in changes {
+                                                    // Timestamp
+                                                    ui.label(
+                                                        change
+                                                            .changed_at
+                                                            .with_timezone(&chrono::Local)
+                                                            .format("%Y-%m-%d %H:%M:%S")
+                                                            .to_string(),
+                                                    );
+
+                                                    // From status
+                                                    let from_color = match change.from_status {
+                                                        NodeStatus::Online => Color32::GREEN,
+                                                        NodeStatus::Offline => Color32::RED,
+                                                        NodeStatus::Unknown => Color32::YELLOW,
+                                                    };
+                                                    ui.colored_label(
+                                                        from_color,
+                                                        change.from_status.to_string(),
+                                                    );
+
+                                                    // To status
+                                                    let to_color = match change.to_status {
+                                                        NodeStatus::Online => Color32::GREEN,
+                                                        NodeStatus::Offline => Color32::RED,
+                                                        NodeStatus::Unknown => Color32::YELLOW,
+                                                    };
+                                                    ui.colored_label(
+                                                        to_color,
+                                                        change.to_status.to_string(),
+                                                    );
+
+                                                    // Duration
+                                                    if let Some(duration_ms) = change.duration_ms {
+                                                        ui.label(format_duration(duration_ms));
+                                                    } else {
+                                                        ui.label("N/A");
+                                                    }
+
+                                                    ui.end_row();
+                                                }
+                                            });
+                                    });
+                                }
+                            }
+                            Err(e) => {
+                                ui.colored_label(
+                                    Color32::RED,
+                                    format!("Error loading status changes: {}", e),
+                                );
+                            }
+                        }
+
+                        ui.add_space(10.0);
+
+                        ui.horizontal(|ui| {
+                            if ui.button("Close").clicked() {
+                                self.show_status_history = None;
+                            }
+                        });
+                    });
+                });
+
+            if !is_open {
+                self.show_status_history = None;
+            }
+        }
+    }
+}
+
+// Helper function to format duration in milliseconds to human-readable string
+fn format_duration(duration_ms: i64) -> String {
+    let seconds = duration_ms / 1000;
+    let minutes = seconds / 60;
+    let hours = minutes / 60;
+    let days = hours / 24;
+
+    if days > 0 {
+        format!("{}d {}h", days, hours % 24)
+    } else if hours > 0 {
+        format!("{}h {}m", hours, minutes % 60)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, seconds % 60)
+    } else {
+        format!("{}s", seconds)
+    }
 }
 
 enum NodeAction {
     Edit(usize),
     Delete(usize),
     Connect(usize),
+    ViewHistory(usize),
 }
 
 enum CredentialAction {

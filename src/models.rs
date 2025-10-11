@@ -163,10 +163,6 @@ impl StatusChange {
 
     /// Get a human-readable description of the status change
     pub fn description(&self) -> String {
-        format!(
-            "{} → {}",
-            self.from_status,
-            self.to_status
-        )
+        format!("{} → {}", self.from_status, self.to_status)
     }
 }
