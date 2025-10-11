@@ -907,7 +907,10 @@ impl NetworkMonitorApp {
             {
                 self.stop_monitoring();
             }
-        } else if ui.button("Start Monitoring").clicked() {
+        } else if ui
+            .button(RichText::new("Start Monitoring").color(Color32::GREEN))
+            .clicked()
+        {
             self.start_monitoring();
         }
     }
