@@ -198,27 +198,43 @@ jobs:
             sudo apt-get install -y gcc-mingw-w64-x86-64
           fi
 
-      - name: Build
+      - name: Build all binaries
         run: |
-          cargo build --release --target ${{ matrix.target }}
+          echo "Building net-monitor (CLI with mode selection)..."
+          cargo build --release --target ${{ matrix.target }} --bin net-monitor
 
-      - name: Prepare binary
+          echo "Building net-monitor-gui (GUI only)..."
+          cargo build --release --target ${{ matrix.target }} --bin net-monitor-gui
+
+          echo "Building net-monitor-tui (TUI only)..."
+          cargo build --release --target ${{ matrix.target }} --bin net-monitor-tui
+
+      - name: Prepare binaries
         run: |
           mkdir -p artifacts
+
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            cp target/${{ matrix.target }}/release/net-monitor.exe artifacts/${{ matrix.name }}
+            # Windows binaries
+            cp target/${{ matrix.target }}/release/net-monitor.exe artifacts/net-monitor.exe
+            cp target/${{ matrix.target }}/release/net-monitor-gui.exe artifacts/net-monitor-gui.exe
+            cp target/${{ matrix.target }}/release/net-monitor-tui.exe artifacts/net-monitor-tui.exe
           else
-            cp target/${{ matrix.target }}/release/net-monitor artifacts/${{ matrix.name }}
-            strip artifacts/${{ matrix.name }}
+            # Unix binaries (strip to reduce size)
+            cp target/${{ matrix.target }}/release/net-monitor artifacts/net-monitor
+            cp target/${{ matrix.target }}/release/net-monitor-gui artifacts/net-monitor-gui
+            cp target/${{ matrix.target }}/release/net-monitor-tui artifacts/net-monitor-tui
+            strip artifacts/net-monitor
+            strip artifacts/net-monitor-gui
+            strip artifacts/net-monitor-tui
           fi
 
       - name: Create archive
         run: |
           cd artifacts
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            zip -r ${{ matrix.archive }} ${{ matrix.name }}
+            zip -r ${{ matrix.archive }} *.exe
           else
-            tar -czf ${{ matrix.archive }} ${{ matrix.name }}
+            tar -czf ${{ matrix.archive }} net-monitor net-monitor-gui net-monitor-tui
           fi
 
       - name: Upload artifacts
@@ -333,12 +349,32 @@ jobs:
           # Add installation section
           echo "## 📦 Installation" >> release_notes.md
           echo "" >> release_notes.md
-          echo "Download the appropriate binary for your platform:" >> release_notes.md
+          echo "Each archive contains **three binaries**:" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "- **\`net-monitor\`**: Default binary with CLI mode selection (\`--mode gui\` or \`--mode tui\`)" >> release_notes.md
+          echo "- **\`net-monitor-gui\`**: GUI-only version (graphical interface)" >> release_notes.md
+          echo "- **\`net-monitor-tui\`**: TUI-only version (terminal interface)" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Download" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "Download the appropriate archive for your platform:" >> release_notes.md
           echo "" >> release_notes.md
           echo "- **Windows**: \`net-monitor-v${{ needs.check-version.outputs.new-version }}-windows-x64.zip\`" >> release_notes.md
           echo "- **macOS (Intel)**: \`net-monitor-v${{ needs.check-version.outputs.new-version }}-macos-x64.tar.gz\`" >> release_notes.md
           echo "- **macOS (Apple Silicon)**: \`net-monitor-v${{ needs.check-version.outputs.new-version }}-macos-arm64.tar.gz\`" >> release_notes.md
           echo "- **Linux**: \`net-monitor-v${{ needs.check-version.outputs.new-version }}-linux-x64.tar.gz\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Usage" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "\`\`\`bash" >> release_notes.md
+          echo "# Default binary with mode selection" >> release_notes.md
+          echo "./net-monitor --mode gui    # Run GUI" >> release_notes.md
+          echo "./net-monitor --mode tui    # Run TUI" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "# Or use the dedicated binaries" >> release_notes.md
+          echo "./net-monitor-gui           # GUI only" >> release_notes.md
+          echo "./net-monitor-tui           # TUI only" >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
           echo "" >> release_notes.md
           echo "### Checksums" >> release_notes.md
           echo "" >> release_notes.md

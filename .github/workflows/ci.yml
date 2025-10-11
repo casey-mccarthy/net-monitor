@@ -188,36 +188,54 @@ jobs:
           echo "Runner architecture: $(uname -m)"
           rustc --version
           rustup show
-          
-          # Build with verbose output for better debugging
-          cargo build --release --target ${{ matrix.target }} --verbose
+
+          # Build all binaries with verbose output for better debugging
+          echo "Building net-monitor (CLI with mode selection)..."
+          cargo build --release --target ${{ matrix.target }} --bin net-monitor --verbose
+
+          echo "Building net-monitor-gui (GUI only)..."
+          cargo build --release --target ${{ matrix.target }} --bin net-monitor-gui --verbose
+
+          echo "Building net-monitor-tui (TUI only)..."
+          cargo build --release --target ${{ matrix.target }} --bin net-monitor-tui --verbose
       
-      - name: Verify binary exists
+      - name: Verify binaries exist
         run: |
-          echo "Checking for built binary..."
-          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            if [ -f "target/${{ matrix.target }}/release/net-monitor.exe" ]; then
-              echo "✓ Binary found: target/${{ matrix.target }}/release/net-monitor.exe"
-              ls -la target/${{ matrix.target }}/release/net-monitor.exe
-              file target/${{ matrix.target }}/release/net-monitor.exe
+          echo "Checking for built binaries..."
+          BINARIES=("net-monitor" "net-monitor-gui" "net-monitor-tui")
+          ALL_FOUND=true
+
+          for BINARY in "${BINARIES[@]}"; do
+            if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+              BINARY_PATH="target/${{ matrix.target }}/release/${BINARY}.exe"
+              if [ -f "$BINARY_PATH" ]; then
+                echo "✓ Binary found: $BINARY_PATH"
+                ls -la "$BINARY_PATH"
+                file "$BINARY_PATH"
+              else
+                echo "✗ Binary not found: $BINARY_PATH"
+                ALL_FOUND=false
+              fi
             else
-              echo "✗ Binary not found: target/${{ matrix.target }}/release/net-monitor.exe"
-              echo "Contents of release directory:"
-              ls -la target/${{ matrix.target }}/release/ || echo "Release directory doesn't exist"
-              exit 1
+              BINARY_PATH="target/${{ matrix.target }}/release/${BINARY}"
+              if [ -f "$BINARY_PATH" ]; then
+                echo "✓ Binary found: $BINARY_PATH"
+                ls -la "$BINARY_PATH"
+                file "$BINARY_PATH"
+              else
+                echo "✗ Binary not found: $BINARY_PATH"
+                ALL_FOUND=false
+              fi
             fi
-          else
-            if [ -f "target/${{ matrix.target }}/release/net-monitor" ]; then
-              echo "✓ Binary found: target/${{ matrix.target }}/release/net-monitor"
-              ls -la target/${{ matrix.target }}/release/net-monitor
-              file target/${{ matrix.target }}/release/net-monitor
-            else
-              echo "✗ Binary not found: target/${{ matrix.target }}/release/net-monitor"
-              echo "Contents of release directory:"
-              ls -la target/${{ matrix.target }}/release/ || echo "Release directory doesn't exist"
-              exit 1
-            fi
+          done
+
+          if [ "$ALL_FOUND" = false ]; then
+            echo "Contents of release directory:"
+            ls -la target/${{ matrix.target }}/release/ || echo "Release directory doesn't exist"
+            exit 1
           fi
+
+          echo "All binaries verified successfully!"
 
   # Security audit
   security-audit:
