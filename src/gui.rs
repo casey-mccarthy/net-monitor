@@ -214,7 +214,7 @@ impl NetworkMonitorApp {
         // Load existing credentials
         let credentials = credential_store.list_credentials().unwrap_or_default();
 
-        Ok(Self {
+        let mut app = Self {
             database,
             nodes,
             editing_node: None,
@@ -234,7 +234,13 @@ impl NetworkMonitorApp {
             new_credential_form: CredentialForm::default(),
             pending_credential_action: None,
             show_status_history: None,
-        })
+        };
+
+        // Start monitoring automatically on launch
+        app.start_monitoring();
+        info!("Monitoring started automatically on application launch");
+
+        Ok(app)
     }
 }
 
