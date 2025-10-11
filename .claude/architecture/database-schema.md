@@ -39,6 +39,24 @@ Stores historical monitoring data.
 - `idx_monitoring_results_node_id` on (node_id)
 - `idx_monitoring_results_checked_at` on (checked_at)
 
+#### `status_changes`
+Stores node status transition events for analytics and historical tracking.
+
+| Column | Type | Constraints | Description |
+|--------|------|------------|-------------|
+| id | INTEGER | PRIMARY KEY | Unique identifier |
+| node_id | INTEGER | NOT NULL, REFERENCES nodes(id) ON DELETE CASCADE | Associated node |
+| from_status | TEXT | NOT NULL | Previous status ('Online', 'Offline', 'Unknown') |
+| to_status | TEXT | NOT NULL | New status ('Online', 'Offline', 'Unknown') |
+| changed_at | TEXT | NOT NULL | ISO 8601 timestamp of status change |
+| duration_ms | INTEGER | | Time spent in previous status (milliseconds) |
+
+**Indexes:**
+- `idx_status_changes_node_id` on (node_id)
+- `idx_status_changes_changed_at` on (changed_at)
+
+**Note:** This table differs from `monitoring_results` by only recording **status transitions** (when status actually changes), not every monitoring check. This enables efficient queries for outage tracking, uptime calculations, and status history analysis.
+
 #### `credentials`
 Stores encrypted authentication credentials.
 
@@ -96,9 +114,9 @@ SELECT n.*, mr.status, mr.checked_at
 FROM nodes n
 LEFT JOIN monitoring_results mr ON n.id = mr.node_id
 WHERE mr.id = (
-    SELECT id FROM monitoring_results 
-    WHERE node_id = n.id 
-    ORDER BY checked_at DESC 
+    SELECT id FROM monitoring_results
+    WHERE node_id = n.id
+    ORDER BY checked_at DESC
     LIMIT 1
 );
 
@@ -112,11 +130,53 @@ LIMIT 100;
 SELECT * FROM nodes
 WHERE monitoring_enabled = 1
 AND datetime('now') > datetime(
-    (SELECT checked_at FROM monitoring_results 
-     WHERE node_id = nodes.id 
+    (SELECT checked_at FROM monitoring_results
+     WHERE node_id = nodes.id
      ORDER BY checked_at DESC LIMIT 1),
     '+' || monitoring_interval || ' seconds'
 );
+
+-- Get status change history for a node
+SELECT * FROM status_changes
+WHERE node_id = ?
+ORDER BY changed_at DESC
+LIMIT 50;
+
+-- Get latest status change for a node
+SELECT * FROM status_changes
+WHERE node_id = ?
+ORDER BY changed_at DESC
+LIMIT 1;
+
+-- Calculate uptime percentage over time period
+SELECT
+    node_id,
+    SUM(CASE WHEN from_status = 'Online' THEN duration_ms ELSE 0 END) as online_ms,
+    SUM(duration_ms) as total_ms,
+    (SUM(CASE WHEN from_status = 'Online' THEN duration_ms ELSE 0 END) * 100.0 / SUM(duration_ms)) as uptime_pct
+FROM status_changes
+WHERE node_id = ?
+    AND changed_at >= ?
+    AND changed_at <= ?
+GROUP BY node_id;
+
+-- Get all outages (transitions to Offline)
+SELECT * FROM status_changes
+WHERE node_id = ? AND to_status = 'Offline'
+ORDER BY changed_at DESC;
+
+-- Get recovery times (time between Offline and Online)
+SELECT
+    sc1.changed_at as outage_start,
+    sc2.changed_at as recovery_time,
+    (julianday(sc2.changed_at) - julianday(sc1.changed_at)) * 86400000 as downtime_ms
+FROM status_changes sc1
+JOIN status_changes sc2 ON sc1.node_id = sc2.node_id
+WHERE sc1.to_status = 'Offline'
+    AND sc2.from_status = 'Offline'
+    AND sc2.to_status = 'Online'
+    AND sc2.changed_at > sc1.changed_at
+ORDER BY sc1.changed_at DESC;
 ```
 
 ## Database Maintenance

@@ -3,9 +3,10 @@ use crate::credentials::{
     CredentialStore, CredentialSummary, FileCredentialStore, SensitiveString, SshCredential,
 };
 use crate::database::Database;
-use crate::models::{MonitorDetail, Node, NodeImport, NodeStatus};
+use crate::models::{MonitorDetail, Node, NodeImport, NodeStatus, StatusChange};
 use crate::monitor::check_node;
 use anyhow::Result;
+use chrono::Utc;
 use directories::ProjectDirs;
 use eframe::egui::{self, Color32, Context, Grid, RichText, ScrollArea, Ui, Window};
 use rfd::FileDialog;
@@ -889,6 +890,7 @@ impl NetworkMonitorApp {
         let thread = thread::spawn(move || {
             let mut last_check_times: HashMap<i64, Instant> = HashMap::new();
             let mut previous_statuses: HashMap<i64, NodeStatus> = HashMap::new();
+            let mut last_status_change_times: HashMap<i64, chrono::DateTime<Utc>> = HashMap::new();
             let mut current_nodes = initial_nodes.clone();
             let runtime = tokio::runtime::Runtime::new().unwrap();
 
@@ -928,6 +930,7 @@ impl NetworkMonitorApp {
                             current_nodes.retain(|n| n.id != Some(node_id));
                             last_check_times.remove(&node_id);
                             previous_statuses.remove(&node_id);
+                            last_status_change_times.remove(&node_id);
                         }
                     }
                 }
@@ -968,7 +971,7 @@ impl NetworkMonitorApp {
                                     }
                                 }
 
-                                // Log status changes
+                                // Log status changes and record in database
                                 if let Some(prev_status) = previous_status {
                                     if prev_status != new_status {
                                         match (prev_status, new_status) {
@@ -1010,6 +1013,42 @@ impl NetworkMonitorApp {
                                             }
                                             _ => {}
                                         }
+
+                                        // Record the status change in the database
+                                        let current_time = Utc::now();
+                                        let duration_ms = last_status_change_times
+                                            .get(&node_id)
+                                            .map(|last_change| {
+                                                StatusChange::calculate_duration(
+                                                    *last_change,
+                                                    current_time,
+                                                )
+                                            });
+
+                                        let status_change = StatusChange {
+                                            id: None,
+                                            node_id,
+                                            from_status: prev_status,
+                                            to_status: new_status,
+                                            changed_at: current_time,
+                                            duration_ms,
+                                        };
+
+                                        if let Err(e) = db.add_status_change(&status_change) {
+                                            error!("Failed to save status change: {}", e);
+                                        } else {
+                                            info!(
+                                                "Status change recorded: {} → {} (duration: {}ms)",
+                                                prev_status,
+                                                new_status,
+                                                duration_ms
+                                                    .map(|d| d.to_string())
+                                                    .unwrap_or_else(|| "N/A".to_string())
+                                            );
+                                        }
+
+                                        // Update the last status change time
+                                        last_status_change_times.insert(node_id, current_time);
                                     }
                                 }
 
