@@ -76,7 +76,7 @@ impl Default for NodeForm {
         Self {
             name: String::new(),
             monitor_type: MonitorTypeForm::Http,
-            monitoring_interval: "60".to_string(),
+            monitoring_interval: "5".to_string(),
             credential_id: None,
             http_url: "https://".to_string(),
             http_expected_status: "200".to_string(),
@@ -599,7 +599,7 @@ impl NetworkMonitorApp {
                     status: NodeStatus::Unknown,
                     last_check: None,
                     response_time: None,
-                    monitoring_interval: form.monitoring_interval.parse().unwrap_or(60),
+                    monitoring_interval: form.monitoring_interval.parse().unwrap_or(5),
                     credential_id: form.credential_id.clone(),
                 };
                 match self.database.add_node(&node) {
@@ -639,7 +639,7 @@ impl NetworkMonitorApp {
                 if let Some(node) = self.nodes.iter_mut().find(|n| n.id == Some(node_id)) {
                     node.name = form.name.clone();
                     node.detail = detail;
-                    node.monitoring_interval = form.monitoring_interval.parse().unwrap_or(60);
+                    node.monitoring_interval = form.monitoring_interval.parse().unwrap_or(5);
                     node.credential_id = form.credential_id.clone();
 
                     if let Err(e) = self.database.update_node(node) {

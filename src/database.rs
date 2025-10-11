@@ -36,7 +36,7 @@ impl Database {
                 status TEXT NOT NULL,
                 last_check TEXT,
                 response_time INTEGER,
-                monitoring_interval INTEGER NOT NULL DEFAULT 60,
+                monitoring_interval INTEGER NOT NULL DEFAULT 5,
                 credential_id TEXT,
                 http_url TEXT,
                 http_expected_status INTEGER,
