@@ -294,8 +294,6 @@ impl NetworkMonitorApp {
             ui.horizontal_centered(|ui| {
                 ui.set_max_width(800.0); // Set a reasonable maximum width
                 ui.vertical(|ui| {
-                    ui.heading("Network Monitor");
-                    ui.separator();
                     ui.horizontal(|ui| {
                         if ui.button("Add Node").clicked() {
                             self.show_add_node = true;
