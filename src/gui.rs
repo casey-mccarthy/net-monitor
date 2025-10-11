@@ -283,9 +283,36 @@ impl eframe::App for NetworkMonitorApp {
 
 impl NetworkMonitorApp {
     fn show_main_window(&mut self, ctx: &Context) {
-        // Add menu bar
+        // Application menu bar
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
+                // File menu
+                ui.menu_button("File", |ui| {
+                    if ui.button("Import Nodes...").clicked() {
+                        self.import_nodes();
+                        ui.close();
+                    }
+                    if ui.button("Export Nodes...").clicked() {
+                        self.export_nodes();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Open Log File").clicked() {
+                        self.open_log_file();
+                        ui.close();
+                    }
+                });
+
+                // Settings menu
+                ui.menu_button("Settings", |ui| {
+                    if ui.button("Credentials...").clicked() {
+                        self.show_credentials = true;
+                        self.reload_credentials();
+                        ui.close();
+                    }
+                });
+
+                // Help menu
                 ui.menu_button("Help", |ui| {
                     if ui.button("About").clicked() {
                         self.show_about = true;
@@ -300,24 +327,13 @@ impl NetworkMonitorApp {
             ui.horizontal_centered(|ui| {
                 ui.set_max_width(800.0); // Set a reasonable maximum width
                 ui.vertical(|ui| {
+                    // Toolbar with view-specific actions
                     ui.horizontal(|ui| {
                         if ui.button("Add Node").clicked() {
                             self.show_add_node = true;
                             self.new_node_form = NodeForm::default();
                         }
-                        if ui.button("Credentials").clicked() {
-                            self.show_credentials = true;
-                            self.reload_credentials();
-                        }
-                        if ui.button("Import Nodes").clicked() {
-                            self.import_nodes();
-                        }
-                        if ui.button("Export Nodes").clicked() {
-                            self.export_nodes();
-                        }
-                        if ui.button("Open Log").clicked() {
-                            self.open_log_file();
-                        }
+                        ui.separator();
                         self.monitoring_toggle_button(ui);
                     });
                     ui.separator();
