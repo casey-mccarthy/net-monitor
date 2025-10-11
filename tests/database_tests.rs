@@ -539,6 +539,342 @@ fn test_calculate_uptime_percentage() {
 }
 
 #[test]
+fn test_uptime_with_offline_period_starting_before_window() {
+    // Bug fix test: Offline period starts before window, ends during window
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    let base_time = Utc::now() - Duration::seconds(1000);
+
+    // Timeline:
+    // T+0: Online
+    // T+200: Goes Offline
+    // T+500: WINDOW START (node is offline)
+    // T+800: Comes back Online
+    // T+1500: WINDOW END (node is online)
+    let changes = vec![
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Offline,
+            to_status: NodeStatus::Online,
+            changed_at: base_time,
+            duration_ms: None,
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Online,
+            to_status: NodeStatus::Offline,
+            changed_at: base_time + Duration::seconds(200),
+            duration_ms: Some(200000),
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Offline,
+            to_status: NodeStatus::Online,
+            changed_at: base_time + Duration::seconds(800),
+            duration_ms: Some(600000),
+        },
+    ];
+
+    for change in &changes {
+        test_db.db.add_status_change(change).unwrap();
+    }
+
+    let window_start = base_time + Duration::seconds(500);
+    let window_end = base_time + Duration::seconds(1500);
+
+    // Expected: 300s offline (T+500 to T+800) out of 1000s window = 70% uptime
+    let uptime = test_db
+        .db
+        .calculate_uptime_percentage(node_id, window_start, window_end)
+        .unwrap();
+
+    assert!(
+        (uptime - 70.0).abs() < 1.0,
+        "Expected ~70% uptime, got {}%",
+        uptime
+    );
+}
+
+#[test]
+fn test_uptime_with_node_offline_at_window_start() {
+    // Bug fix test: Node is offline at window start (status change before window)
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    let base_time = Utc::now() - Duration::seconds(1000);
+
+    // Timeline:
+    // T+0: Goes Offline (before our window)
+    // T+500: WINDOW START (node is offline)
+    // T+700: Comes back Online
+    // T+1500: WINDOW END (node is online)
+    let changes = vec![
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Online,
+            to_status: NodeStatus::Offline,
+            changed_at: base_time,
+            duration_ms: Some(100000),
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Offline,
+            to_status: NodeStatus::Online,
+            changed_at: base_time + Duration::seconds(700),
+            duration_ms: Some(700000),
+        },
+    ];
+
+    for change in &changes {
+        test_db.db.add_status_change(change).unwrap();
+    }
+
+    let window_start = base_time + Duration::seconds(500);
+    let window_end = base_time + Duration::seconds(1500);
+
+    // Expected: 200s offline (T+500 to T+700) out of 1000s window = 80% uptime
+    let uptime = test_db
+        .db
+        .calculate_uptime_percentage(node_id, window_start, window_end)
+        .unwrap();
+
+    assert!(
+        (uptime - 80.0).abs() < 1.0,
+        "Expected ~80% uptime, got {}%",
+        uptime
+    );
+}
+
+#[test]
+fn test_uptime_with_node_offline_past_window_end() {
+    // Bug fix test: Node goes offline during window and stays offline past window end
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    let base_time = Utc::now() - Duration::seconds(1000);
+
+    // Timeline:
+    // T+0: WINDOW START (node online by default)
+    // T+300: Goes Offline
+    // T+1000: WINDOW END (node still offline)
+    // T+1500: Comes back Online (after window)
+    let changes = vec![
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Online,
+            to_status: NodeStatus::Offline,
+            changed_at: base_time + Duration::seconds(300),
+            duration_ms: Some(300000),
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Offline,
+            to_status: NodeStatus::Online,
+            changed_at: base_time + Duration::seconds(1500),
+            duration_ms: Some(1200000),
+        },
+    ];
+
+    for change in &changes {
+        test_db.db.add_status_change(change).unwrap();
+    }
+
+    let window_start = base_time;
+    let window_end = base_time + Duration::seconds(1000);
+
+    // Expected: 700s offline (T+300 to T+1000) out of 1000s window = 30% uptime
+    let uptime = test_db
+        .db
+        .calculate_uptime_percentage(node_id, window_start, window_end)
+        .unwrap();
+
+    assert!(
+        (uptime - 30.0).abs() < 1.0,
+        "Expected ~30% uptime, got {}%",
+        uptime
+    );
+}
+
+#[test]
+fn test_uptime_with_multiple_transitions_across_boundaries() {
+    // Bug fix test: Multiple status changes spanning window boundaries
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    let base_time = Utc::now() - Duration::seconds(2000);
+
+    // Timeline:
+    // T+0: Offline (before window)
+    // T+100: Online
+    // T+200: Offline
+    // T+500: WINDOW START (offline)
+    // T+600: Online
+    // T+800: Offline
+    // T+1000: Online
+    // T+1500: WINDOW END (online)
+    // T+1800: Offline (after window)
+    let changes = vec![
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Online,
+            to_status: NodeStatus::Offline,
+            changed_at: base_time,
+            duration_ms: None,
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Offline,
+            to_status: NodeStatus::Online,
+            changed_at: base_time + Duration::seconds(100),
+            duration_ms: Some(100000),
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Online,
+            to_status: NodeStatus::Offline,
+            changed_at: base_time + Duration::seconds(200),
+            duration_ms: Some(100000),
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Offline,
+            to_status: NodeStatus::Online,
+            changed_at: base_time + Duration::seconds(600),
+            duration_ms: Some(400000),
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Online,
+            to_status: NodeStatus::Offline,
+            changed_at: base_time + Duration::seconds(800),
+            duration_ms: Some(200000),
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Offline,
+            to_status: NodeStatus::Online,
+            changed_at: base_time + Duration::seconds(1000),
+            duration_ms: Some(200000),
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Online,
+            to_status: NodeStatus::Offline,
+            changed_at: base_time + Duration::seconds(1800),
+            duration_ms: Some(800000),
+        },
+    ];
+
+    for change in &changes {
+        test_db.db.add_status_change(change).unwrap();
+    }
+
+    let window_start = base_time + Duration::seconds(500);
+    let window_end = base_time + Duration::seconds(1500);
+
+    // Within window [500-1500]:
+    // - Offline: [500-600] = 100s
+    // - Online: [600-800] = 200s
+    // - Offline: [800-1000] = 200s
+    // - Online: [1000-1500] = 500s
+    // Total offline in window: 300s out of 1000s = 70% uptime
+    let uptime = test_db
+        .db
+        .calculate_uptime_percentage(node_id, window_start, window_end)
+        .unwrap();
+
+    assert!(
+        (uptime - 70.0).abs() < 1.0,
+        "Expected ~70% uptime, got {}%",
+        uptime
+    );
+}
+
+#[test]
+fn test_uptime_with_invalid_time_window() {
+    // Bug fix test: Division by zero prevention
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    let time = Utc::now();
+
+    // Test with start_time == end_time
+    let result = test_db.db.calculate_uptime_percentage(node_id, time, time);
+
+    assert!(result.is_err(), "Should error on zero-duration window");
+
+    // Test with start_time > end_time
+    let result =
+        test_db
+            .db
+            .calculate_uptime_percentage(node_id, time + Duration::seconds(100), time);
+
+    assert!(
+        result.is_err(),
+        "Should error when start_time is after end_time"
+    );
+}
+
+#[test]
+fn test_uptime_no_status_changes_before_window() {
+    // Edge case: No status changes exist before window start
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    let base_time = Utc::now();
+
+    // Add a status change that happens AFTER window start
+    let change = StatusChange {
+        id: None,
+        node_id,
+        from_status: NodeStatus::Online,
+        to_status: NodeStatus::Offline,
+        changed_at: base_time + Duration::seconds(500),
+        duration_ms: Some(500000),
+    };
+
+    test_db.db.add_status_change(&change).unwrap();
+
+    // Window is before the first status change
+    let window_start = base_time;
+    let window_end = base_time + Duration::seconds(1000);
+
+    // Expected: Node assumed online initially, then offline from T+500 to T+1000
+    // 500s offline out of 1000s = 50% uptime
+    let uptime = test_db
+        .db
+        .calculate_uptime_percentage(node_id, window_start, window_end)
+        .unwrap();
+
+    assert!(
+        (uptime - 50.0).abs() < 1.0,
+        "Expected ~50% uptime, got {}%",
+        uptime
+    );
+}
+
+#[test]
 fn test_status_change_with_duration() {
     let test_db = TestDatabase::new();
     let node = fixtures::unit_test_http_node();

@@ -337,6 +337,37 @@ impl Database {
         }
     }
 
+    /// Gets the status of a node at a specific point in time
+    /// by finding the most recent status change before that time
+    ///
+    /// Returns None if there are no status changes before the given time
+    /// (in which case the node should be assumed to be in its default/current state)
+    pub fn get_status_at_time(
+        &self,
+        node_id: i64,
+        at_time: DateTime<Utc>,
+    ) -> Result<Option<NodeStatus>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT to_status
+             FROM status_changes
+             WHERE node_id = ? AND changed_at < ?
+             ORDER BY changed_at DESC
+             LIMIT 1",
+        )?;
+
+        let result = stmt.query_row(params![node_id, at_time.to_rfc3339()], |row| {
+            let status_str: String = row.get(0)?;
+            Ok(status_str)
+        });
+
+        match result {
+            Ok(status_str) => Ok(Some(status_str.parse().unwrap_or(NodeStatus::Offline))),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Calculate uptime percentage over a time period
     /// Returns percentage (0.0 - 100.0) of time the node was Online
     ///
@@ -350,62 +381,95 @@ impl Database {
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
     ) -> Result<f64> {
+        // Validate time window
+        if start_time >= end_time {
+            return Err(anyhow::anyhow!(
+                "Invalid time window: start_time must be before end_time"
+            ));
+        }
+
+        let total_duration = StatusChange::calculate_duration(start_time, end_time);
+        if total_duration == 0 {
+            return Err(anyhow::anyhow!("Invalid time window: zero duration"));
+        }
+
+        // Get all status changes that could affect this time window
+        // This includes changes within the window AND the last change before the window
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT from_status, to_status, changed_at, duration_ms
+            "SELECT from_status, to_status, changed_at
              FROM status_changes
-             WHERE node_id = ? AND changed_at >= ? AND changed_at <= ?
+             WHERE node_id = ? AND changed_at <= ?
              ORDER BY changed_at ASC",
         )?;
 
         let changes: Vec<StatusChange> = stmt
-            .query_map(
-                params![node_id, start_time.to_rfc3339(), end_time.to_rfc3339()],
-                |row| {
-                    let from_status: String = row.get(0)?;
-                    let to_status: String = row.get(1)?;
-                    let changed_at_str: String = row.get(2)?;
-                    let duration_ms: Option<i64> = row.get(3)?;
+            .query_map(params![node_id, end_time.to_rfc3339()], |row| {
+                let from_status: String = row.get(0)?;
+                let to_status: String = row.get(1)?;
+                let changed_at_str: String = row.get(2)?;
 
-                    let changed_at = DateTime::parse_from_rfc3339(&changed_at_str)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                let changed_at = DateTime::parse_from_rfc3339(&changed_at_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
 
-                    Ok(StatusChange {
-                        id: None,
-                        node_id,
-                        from_status: from_status.parse().unwrap_or(NodeStatus::Offline),
-                        to_status: to_status.parse().unwrap_or(NodeStatus::Offline),
-                        changed_at,
-                        duration_ms,
-                    })
-                },
-            )?
+                Ok(StatusChange {
+                    id: None,
+                    node_id,
+                    from_status: from_status.parse().unwrap_or(NodeStatus::Offline),
+                    to_status: to_status.parse().unwrap_or(NodeStatus::Offline),
+                    changed_at,
+                    duration_ms: None,
+                })
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        // If no status changes, assume 100% uptime (node is online)
+        // If no status changes at all, assume 100% uptime (node is online)
         if changes.is_empty() {
             return Ok(100.0);
         }
 
-        let total_duration = StatusChange::calculate_duration(start_time, end_time);
         let mut offline_duration = 0i64;
+        let mut current_status = NodeStatus::Online; // Default assumption
+        let mut current_time = start_time;
 
-        // Calculate time spent offline by summing duration_ms for all Offline periods
+        // Determine initial status at start_time
         for change in &changes {
-            if change.from_status == NodeStatus::Offline {
-                if let Some(duration) = change.duration_ms {
-                    offline_duration += duration;
-                }
+            if change.changed_at < start_time {
+                current_status = change.to_status;
+            } else {
+                break;
             }
         }
 
-        // Handle the last status if it was Offline (node is currently offline)
-        if let Some(last_change) = changes.last() {
-            if last_change.to_status == NodeStatus::Offline {
-                offline_duration +=
-                    StatusChange::calculate_duration(last_change.changed_at, end_time);
+        // Process each status change within or after the window
+        for change in &changes {
+            if change.changed_at >= end_time {
+                break;
             }
+
+            if change.changed_at > start_time {
+                // Calculate duration from current_time to this change
+                // (but only count time within the window)
+                let period_start = current_time.max(start_time);
+                let period_end = change.changed_at.min(end_time);
+
+                if period_start < period_end && current_status == NodeStatus::Offline {
+                    offline_duration += StatusChange::calculate_duration(period_start, period_end);
+                }
+
+                current_time = change.changed_at;
+                current_status = change.to_status;
+            } else if change.changed_at == start_time {
+                // Change happens exactly at start_time
+                current_time = start_time;
+                current_status = change.to_status;
+            }
+        }
+
+        // Handle the remaining time from the last change to end_time
+        if current_time < end_time && current_status == NodeStatus::Offline {
+            offline_duration += StatusChange::calculate_duration(current_time, end_time);
         }
 
         // Calculate uptime as 100% minus the percentage of time spent offline
