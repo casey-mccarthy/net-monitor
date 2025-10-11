@@ -3,6 +3,21 @@ name = "net-monitor"
 version = "0.8.0"
 edition = "2021"
 
+# Default binary with CLI mode selection (backward compatible)
+[[bin]]
+name = "net-monitor"
+path = "src/main.rs"
+
+# GUI-only binary
+[[bin]]
+name = "net-monitor-gui"
+path = "src/bin/net-monitor-gui.rs"
+
+# TUI-only binary
+[[bin]]
+name = "net-monitor-tui"
+path = "src/bin/net-monitor-tui.rs"
+
 [dependencies]
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
