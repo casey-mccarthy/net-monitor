@@ -23,6 +23,7 @@ use tracing::{error, info};
 enum MonitorTypeForm {
     Http,
     Ping,
+    Tcp,
 }
 
 impl fmt::Display for MonitorTypeForm {
@@ -30,6 +31,7 @@ impl fmt::Display for MonitorTypeForm {
         match self {
             MonitorTypeForm::Http => write!(f, "HTTP"),
             MonitorTypeForm::Ping => write!(f, "Ping"),
+            MonitorTypeForm::Tcp => write!(f, "TCP"),
         }
     }
 }
@@ -48,6 +50,10 @@ struct NodeForm {
     ping_host: String,
     ping_count: String,
     ping_timeout: String,
+    // TCP
+    tcp_host: String,
+    tcp_port: String,
+    tcp_timeout: String,
 }
 
 /// Form data for creating/editing credentials
@@ -83,6 +89,9 @@ impl Default for NodeForm {
             ping_host: String::new(),
             ping_count: "4".to_string(),
             ping_timeout: "5".to_string(),
+            tcp_host: String::new(),
+            tcp_port: String::new(),
+            tcp_timeout: "5".to_string(),
         }
     }
 }
@@ -125,6 +134,11 @@ impl NodeForm {
                 count: self.ping_count.parse()?,
                 timeout: self.ping_timeout.parse()?,
             }),
+            MonitorTypeForm::Tcp => Ok(MonitorDetail::Tcp {
+                host: self.tcp_host.clone(),
+                port: self.tcp_port.parse()?,
+                timeout: self.tcp_timeout.parse()?,
+            }),
         }
     }
 
@@ -154,6 +168,16 @@ impl NodeForm {
                 form.ping_host = host.clone();
                 form.ping_count = count.to_string();
                 form.ping_timeout = timeout.to_string();
+            }
+            MonitorDetail::Tcp {
+                host,
+                port,
+                timeout,
+            } => {
+                form.monitor_type = MonitorTypeForm::Tcp;
+                form.tcp_host = host.clone();
+                form.tcp_port = port.to_string();
+                form.tcp_timeout = timeout.to_string();
             }
         }
         form
@@ -385,11 +409,8 @@ impl NetworkMonitorApp {
                         };
 
                         ui.label(&node.name);
-                        let target = match &node.detail {
-                            MonitorDetail::Http { url, .. } => url.as_str(),
-                            MonitorDetail::Ping { host, .. } => host.as_str(),
-                        };
-                        ui.label(target);
+                        let target = node.detail.get_connection_target();
+                        ui.label(&target);
                         ui.label(node.detail.to_string());
                         let status_color = match node.status {
                             NodeStatus::Online => Color32::GREEN,
@@ -551,6 +572,7 @@ impl NetworkMonitorApp {
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut form.monitor_type, MonitorTypeForm::Http, "HTTP");
                     ui.selectable_value(&mut form.monitor_type, MonitorTypeForm::Ping, "Ping");
+                    ui.selectable_value(&mut form.monitor_type, MonitorTypeForm::Tcp, "TCP");
                 });
             ui.end_row();
 
@@ -598,6 +620,17 @@ impl NetworkMonitorApp {
                     ui.end_row();
                     ui.label("Timeout (s):");
                     ui.text_edit_singleline(&mut form.ping_timeout);
+                    ui.end_row();
+                }
+                MonitorTypeForm::Tcp => {
+                    ui.label("Host:");
+                    ui.text_edit_singleline(&mut form.tcp_host);
+                    ui.end_row();
+                    ui.label("Port:");
+                    ui.text_edit_singleline(&mut form.tcp_port);
+                    ui.end_row();
+                    ui.label("Timeout (s):");
+                    ui.text_edit_singleline(&mut form.tcp_timeout);
                     ui.end_row();
                 }
             }
@@ -729,7 +762,7 @@ impl NetworkMonitorApp {
                         crate::connection::ConnectionType::Http => {
                             // HTTP hosts always open web browser, regardless of credentials
                             let http_strategy = crate::connection::HttpConnectionStrategy;
-                            match http_strategy.connect(target) {
+                            match http_strategy.connect(&target) {
                                 Ok(_) => {
                                     info!("Successfully opened {} in web browser", target);
                                     self.set_status_message(format!(
@@ -761,7 +794,7 @@ impl NetworkMonitorApp {
                                         let ssh_strategy =
                                             crate::connection::SshConnectionStrategy::new();
                                         match ssh_strategy.connect_with_credentials(
-                                            target,
+                                            &target,
                                             &stored_credential.credential,
                                         ) {
                                             Ok(_) => {
@@ -798,7 +831,7 @@ impl NetworkMonitorApp {
                             } else {
                                 // No credentials, use default SSH connection for ICMP hosts
                                 let ssh_strategy = crate::connection::SshConnectionStrategy::new();
-                                match ssh_strategy.connect(target) {
+                                match ssh_strategy.connect(&target) {
                                     Ok(_) => {
                                         info!(
                                             "Successfully initiated SSH connection to {}",
@@ -834,7 +867,7 @@ impl NetworkMonitorApp {
                                         let ssh_strategy =
                                             crate::connection::SshConnectionStrategy::new();
                                         match ssh_strategy.connect_with_credentials(
-                                            target,
+                                            &target,
                                             &stored_credential.credential,
                                         ) {
                                             Ok(_) => {
@@ -871,7 +904,80 @@ impl NetworkMonitorApp {
                             } else {
                                 // No credentials, use default SSH connection
                                 let ssh_strategy = crate::connection::SshConnectionStrategy::new();
-                                match ssh_strategy.connect(target) {
+                                match ssh_strategy.connect(&target) {
+                                    Ok(_) => {
+                                        info!(
+                                            "Successfully initiated SSH connection to {}",
+                                            target
+                                        );
+                                        self.set_status_message(format!(
+                                            "Connecting to {} via SSH...",
+                                            target
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to connect to {} via SSH: {}", target, e);
+                                        self.set_status_message(format!(
+                                            "Failed to connect via SSH: {}",
+                                            e
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        crate::connection::ConnectionType::Tcp => {
+                            // TCP hosts use SSH connection with credentials if available (similar to Ping)
+                            if let Some(ref credential_id) = node.credential_id {
+                                match self
+                                    .credential_store
+                                    .get_credential(&credential_id.parse().unwrap_or_default())
+                                {
+                                    Ok(Some(stored_credential)) => {
+                                        println!(
+                                            "Connecting to {} using credential: {}",
+                                            target, stored_credential.name
+                                        );
+                                        let ssh_strategy =
+                                            crate::connection::SshConnectionStrategy::new();
+                                        match ssh_strategy.connect_with_credentials(
+                                            &target,
+                                            &stored_credential.credential,
+                                        ) {
+                                            Ok(_) => {
+                                                info!("Successfully initiated authenticated SSH connection to {}", target);
+                                                self.set_status_message(format!(
+                                                    "Connecting to {} with SSH credentials...",
+                                                    target
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to connect to {} with SSH credentials: {}", target, e);
+                                                self.set_status_message(format!(
+                                                    "Failed to connect with SSH credentials: {}",
+                                                    e
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        error!("Credential {} not found", credential_id);
+                                        self.set_status_message("Credential not found".to_string());
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            "Failed to retrieve credential {}: {}",
+                                            credential_id, e
+                                        );
+                                        self.set_status_message(format!(
+                                            "Failed to retrieve credential: {}",
+                                            e
+                                        ));
+                                    }
+                                }
+                            } else {
+                                // No credentials, use default SSH connection for TCP hosts
+                                let ssh_strategy = crate::connection::SshConnectionStrategy::new();
+                                match ssh_strategy.connect(&target) {
                                     Ok(_) => {
                                         info!(
                                             "Successfully initiated SSH connection to {}",

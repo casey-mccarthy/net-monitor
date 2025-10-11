@@ -1,6 +1,7 @@
 use crate::models::{MonitorDetail, MonitoringResult, Node, NodeStatus};
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 use tracing::info;
 
@@ -21,6 +22,11 @@ pub async fn check_node(node: &Node) -> Result<MonitoringResult> {
             // The `ping` crate doesn't support a `count` parameter in this function signature
             check_ping(host, *timeout).await
         }
+        MonitorDetail::Tcp {
+            host,
+            port,
+            timeout,
+        } => check_tcp(host, *port, *timeout).await,
     };
     let response_time = start_time.elapsed().as_millis() as u64;
 
@@ -73,5 +79,46 @@ async fn check_ping(host: &str, timeout: u64) -> Result<String> {
     ) {
         Ok(_) => Ok("Ping successful".to_string()),
         Err(e) => Err(anyhow!("Ping failed: {}", e)),
+    }
+}
+
+async fn check_tcp(host: &str, port: u16, timeout: u64) -> Result<String> {
+    info!("Checking TCP connection to {}:{}", host, port);
+
+    // Format the address and resolve DNS
+    let addr_str = format!("{}:{}", host, port);
+    let socket_addrs: Vec<_> = addr_str
+        .to_socket_addrs()
+        .context(format!("Failed to resolve hostname: {}", host))?
+        .collect();
+
+    if socket_addrs.is_empty() {
+        return Err(anyhow!("No addresses found for {}:{}", host, port));
+    }
+
+    // Try connecting to each resolved address
+    let timeout_duration = Duration::from_secs(timeout);
+    let mut last_error = None;
+
+    for socket_addr in socket_addrs {
+        match TcpStream::connect_timeout(&socket_addr, timeout_duration) {
+            Ok(_stream) => {
+                return Ok(format!(
+                    "TCP connection successful to {}:{} ({})",
+                    host, port, socket_addr
+                ));
+            }
+            Err(e) => {
+                last_error = Some(e);
+                continue;
+            }
+        }
+    }
+
+    // If we get here, all connection attempts failed
+    if let Some(err) = last_error {
+        Err(anyhow!("Failed to connect to {}:{} - {}", host, port, err))
+    } else {
+        Err(anyhow!("Failed to connect to {}:{}", host, port))
     }
 }

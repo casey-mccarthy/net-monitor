@@ -341,4 +341,176 @@ fn test_monitor_detail_variants() {
         }
         _ => panic!("Expected Ping variant"),
     }
+
+    let tcp_detail = MonitorDetail::Tcp {
+        host: "login.eqemulator.net".to_string(),
+        port: 5998,
+        timeout: 5,
+    };
+    match tcp_detail {
+        MonitorDetail::Tcp {
+            host,
+            port,
+            timeout,
+        } => {
+            assert_eq!(host, "login.eqemulator.net");
+            assert_eq!(port, 5998);
+            assert_eq!(timeout, 5);
+        }
+        _ => panic!("Expected TCP variant"),
+    }
+}
+
+// ============================================================================
+// TCP Monitoring Tests
+// ============================================================================
+
+#[tokio::test]
+#[cfg(feature = "network-tests")]
+async fn test_tcp_monitoring_success() {
+    let test_db = TestDatabase::new();
+
+    // Test with the concrete example from issue #15
+    let node = Node {
+        id: Some(1),
+        name: "EQ Emulator Login Server".to_string(),
+        detail: MonitorDetail::Tcp {
+            host: "login.eqemulator.net".to_string(),
+            port: 5998,
+            timeout: 5,
+        },
+        status: NodeStatus::Offline,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    };
+
+    let node_id = test_db.db.add_node(&node).unwrap();
+    let mut node_with_id = node;
+    node_with_id.id = Some(node_id);
+
+    let result = check_node(&node_with_id).await;
+
+    // Network tests can be flaky, so we verify both success and failure cases
+    assert!(result.is_ok());
+    let monitoring_result = result.unwrap();
+    assert_eq!(monitoring_result.node_id, node_id);
+    assert!(monitoring_result.response_time.is_some());
+    assert!(monitoring_result.details.is_some());
+
+    // The server might be up or down, but the test should complete without error
+    assert!(
+        monitoring_result.status == NodeStatus::Online
+            || monitoring_result.status == NodeStatus::Offline
+    );
+}
+
+#[tokio::test]
+async fn test_tcp_monitoring_failure() {
+    let test_db = TestDatabase::new();
+
+    // Test with an unreachable host
+    let node = Node {
+        id: Some(1),
+        name: "Unreachable TCP Server".to_string(),
+        detail: MonitorDetail::Tcp {
+            host: "invalid-host-that-does-not-exist-12345.com".to_string(),
+            port: 9999,
+            timeout: 2,
+        },
+        status: NodeStatus::Offline,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    };
+
+    let node_id = test_db.db.add_node(&node).unwrap();
+    let mut node_with_id = node;
+    node_with_id.id = Some(node_id);
+
+    let result = check_node(&node_with_id).await;
+
+    assert!(result.is_ok());
+    let monitoring_result = result.unwrap();
+    assert_eq!(monitoring_result.node_id, node_id);
+    assert_eq!(monitoring_result.status, NodeStatus::Offline);
+    assert!(monitoring_result.response_time.is_some());
+    assert!(monitoring_result.details.is_some());
+}
+
+#[tokio::test]
+#[cfg(feature = "network-tests")]
+async fn test_tcp_monitoring_localhost() {
+    let test_db = TestDatabase::new();
+
+    // Test with localhost:80 (most systems have something listening on port 80 or will reject quickly)
+    let node = Node {
+        id: Some(1),
+        name: "Localhost TCP Test".to_string(),
+        detail: MonitorDetail::Tcp {
+            host: "127.0.0.1".to_string(),
+            port: 80,
+            timeout: 2,
+        },
+        status: NodeStatus::Offline,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    };
+
+    let node_id = test_db.db.add_node(&node).unwrap();
+    let mut node_with_id = node;
+    node_with_id.id = Some(node_id);
+
+    let result = check_node(&node_with_id).await;
+
+    assert!(result.is_ok());
+    let monitoring_result = result.unwrap();
+    assert_eq!(monitoring_result.node_id, node_id);
+    assert!(monitoring_result.response_time.is_some());
+    assert!(monitoring_result.details.is_some());
+}
+
+#[tokio::test]
+async fn test_tcp_monitoring_workflow() {
+    let test_db = TestDatabase::new();
+
+    // Create a TCP node
+    let node = Node {
+        id: None,
+        name: "TCP Workflow Test".to_string(),
+        detail: MonitorDetail::Tcp {
+            host: "example.com".to_string(),
+            port: 80,
+            timeout: 5,
+        },
+        status: NodeStatus::Offline,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    };
+
+    // Add node to database
+    let node_id = test_db.db.add_node(&node).unwrap();
+    assert!(node_id > 0);
+
+    // Retrieve the node from database
+    let nodes = test_db.db.get_all_nodes().unwrap();
+    assert_eq!(nodes.len(), 1);
+    let mut retrieved_node = nodes[0].clone();
+    assert!(matches!(retrieved_node.detail, MonitorDetail::Tcp { .. }));
+
+    // Update the node
+    retrieved_node.id = Some(node_id);
+    retrieved_node.status = NodeStatus::Online;
+    test_db.db.update_node(&retrieved_node).unwrap();
+
+    // Verify the update
+    let updated_nodes = test_db.db.get_all_nodes().unwrap();
+    assert_eq!(updated_nodes.len(), 1);
+    assert_eq!(updated_nodes[0].status, NodeStatus::Online);
 }

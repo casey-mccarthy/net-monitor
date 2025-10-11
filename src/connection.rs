@@ -391,6 +391,7 @@ pub fn create_connection_strategy(connection_type: ConnectionType) -> Box<dyn Co
         ConnectionType::Http => Box::new(HttpConnectionStrategy),
         ConnectionType::Ssh => Box::new(SshConnectionStrategy::new()),
         ConnectionType::Ping => Box::new(PingConnectionStrategy::new()),
+        ConnectionType::Tcp => Box::new(SshConnectionStrategy::new()),
     }
 }
 
@@ -420,6 +421,14 @@ pub fn create_authenticated_connection_strategy(
                 Box::new(PingConnectionStrategy::new())
             }
         }
+        ConnectionType::Tcp => {
+            // TCP connections use SSH for interactive access
+            if let Some(store) = credential_store {
+                Box::new(SshConnectionStrategy::with_credential_store(store))
+            } else {
+                Box::new(SshConnectionStrategy::new())
+            }
+        }
     }
 }
 
@@ -430,4 +439,5 @@ pub enum ConnectionType {
     Http,
     Ssh,
     Ping,
+    Tcp,
 }
