@@ -30,7 +30,11 @@
       "Bash(set RUSTFLAGS=-A dead_code)",
       "Bash(gh pr edit:*)",
       "Bash(gh pr:*)",
-      "Bash(gh run view:*)"
+      "Bash(gh run view:*)",
+      "Bash(gh api:*)",
+      "Bash(RUSTFLAGS=\"-A dead_code\" cargo clippy:*)",
+      "Bash(RUSTFLAGS=\"-A dead_code\" cargo test:*)",
+      "Bash(RUSTFLAGS=\"-A dead_code\" cargo build:*)"
     ],
     "deny": [],
     "ask": []
