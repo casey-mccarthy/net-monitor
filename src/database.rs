@@ -42,7 +42,10 @@ impl Database {
                 http_expected_status INTEGER,
                 ping_host TEXT,
                 ping_count INTEGER,
-                ping_timeout INTEGER
+                ping_timeout INTEGER,
+                tcp_host TEXT,
+                tcp_port INTEGER,
+                tcp_timeout INTEGER
             )",
             [],
         )?;
@@ -86,6 +89,9 @@ impl Database {
         // Add credential_id column to existing nodes table if it doesn't exist
         self.migrate_credential_column(&conn)?;
 
+        // Add TCP columns to existing nodes table if they don't exist
+        self.migrate_tcp_columns(&conn)?;
+
         // Migrate Unknown status to Offline
         self.migrate_unknown_status(&conn)?;
 
@@ -106,6 +112,38 @@ impl Database {
         if !column_exists {
             conn.execute("ALTER TABLE nodes ADD COLUMN credential_id TEXT", [])?;
             info!("Added credential_id column to nodes table");
+        }
+
+        Ok(())
+    }
+
+    /// Migrate to add TCP columns if they don't exist
+    fn migrate_tcp_columns(&self, conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(nodes)")?;
+        let existing_columns: Vec<String> = stmt
+            .query_map([], |row| {
+                let column_name: String = row.get(1)?;
+                Ok(column_name)
+            })?
+            .filter_map(|name| name.ok())
+            .collect();
+
+        // Add tcp_host column if it doesn't exist
+        if !existing_columns.contains(&"tcp_host".to_string()) {
+            conn.execute("ALTER TABLE nodes ADD COLUMN tcp_host TEXT", [])?;
+            info!("Added tcp_host column to nodes table");
+        }
+
+        // Add tcp_port column if it doesn't exist
+        if !existing_columns.contains(&"tcp_port".to_string()) {
+            conn.execute("ALTER TABLE nodes ADD COLUMN tcp_port INTEGER", [])?;
+            info!("Added tcp_port column to nodes table");
+        }
+
+        // Add tcp_timeout column if it doesn't exist
+        if !existing_columns.contains(&"tcp_timeout".to_string()) {
+            conn.execute("ALTER TABLE nodes ADD COLUMN tcp_timeout INTEGER", [])?;
+            info!("Added tcp_timeout column to nodes table");
         }
 
         Ok(())
@@ -159,16 +197,26 @@ impl Database {
     /// Adds a new node to the database
     pub fn add_node(&self, node: &Node) -> Result<i64> {
         let conn = self.get_connection()?;
-        let (monitor_type, http_url, http_expected_status, ping_host, ping_count, ping_timeout) =
-            node.detail.to_db_params();
+        let (
+            monitor_type,
+            http_url,
+            http_expected_status,
+            ping_host,
+            ping_count,
+            ping_timeout,
+            tcp_host,
+            tcp_port,
+            tcp_timeout,
+        ) = node.detail.to_db_params();
 
         let status_str = node.status.to_string();
 
         conn.execute(
             "INSERT INTO nodes (
                 name, monitor_type, status, last_check, response_time, monitoring_interval,
-                credential_id, http_url, http_expected_status, ping_host, ping_count, ping_timeout
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                credential_id, http_url, http_expected_status, ping_host, ping_count, ping_timeout,
+                tcp_host, tcp_port, tcp_timeout
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 node.name,
                 monitor_type,
@@ -182,6 +230,9 @@ impl Database {
                 ping_host,
                 ping_count,
                 ping_timeout,
+                tcp_host,
+                tcp_port,
+                tcp_timeout,
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -190,8 +241,17 @@ impl Database {
     /// Updates an existing node in the database
     pub fn update_node(&self, node: &Node) -> Result<()> {
         let conn = self.get_connection()?;
-        let (monitor_type, http_url, http_expected_status, ping_host, ping_count, ping_timeout) =
-            node.detail.to_db_params();
+        let (
+            monitor_type,
+            http_url,
+            http_expected_status,
+            ping_host,
+            ping_count,
+            ping_timeout,
+            tcp_host,
+            tcp_port,
+            tcp_timeout,
+        ) = node.detail.to_db_params();
 
         let status_str = node.status.to_string();
 
@@ -199,8 +259,9 @@ impl Database {
             "UPDATE nodes SET
                 name = ?1, monitor_type = ?2, status = ?3, last_check = ?4, response_time = ?5,
                 monitoring_interval = ?6, credential_id = ?7, http_url = ?8, http_expected_status = ?9,
-                ping_host = ?10, ping_count = ?11, ping_timeout = ?12
-            WHERE id = ?13",
+                ping_host = ?10, ping_count = ?11, ping_timeout = ?12,
+                tcp_host = ?13, tcp_port = ?14, tcp_timeout = ?15
+            WHERE id = ?16",
             params![
                 node.name,
                 monitor_type,
@@ -214,6 +275,9 @@ impl Database {
                 ping_host,
                 ping_count,
                 ping_timeout,
+                tcp_host,
+                tcp_port,
+                tcp_timeout,
                 node.id,
             ],
         )?;
@@ -225,7 +289,8 @@ impl Database {
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare(
             "SELECT id, name, monitor_type, status, last_check, response_time, monitoring_interval,
-                    credential_id, http_url, http_expected_status, ping_host, ping_count, ping_timeout
+                    credential_id, http_url, http_expected_status, ping_host, ping_count, ping_timeout,
+                    tcp_host, tcp_port, tcp_timeout
              FROM nodes ORDER BY name",
         )?;
         let nodes = stmt.query_map([], |row| self.row_to_node(row))?;
@@ -525,12 +590,15 @@ impl Database {
 }
 
 type DbParams = (
-    &'static str,
-    Option<String>,
-    Option<u16>,
-    Option<String>,
-    Option<u32>,
-    Option<u64>,
+    &'static str,   // monitor_type
+    Option<String>, // http_url
+    Option<u16>,    // http_expected_status
+    Option<String>, // ping_host
+    Option<u32>,    // ping_count
+    Option<u64>,    // ping_timeout
+    Option<String>, // tcp_host
+    Option<u16>,    // tcp_port
+    Option<u64>,    // tcp_timeout
 );
 
 impl MonitorDetail {
@@ -546,6 +614,9 @@ impl MonitorDetail {
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
             ),
             MonitorDetail::Ping {
                 host,
@@ -557,6 +628,24 @@ impl MonitorDetail {
                 None,
                 Some(host.clone()),
                 Some(*count),
+                Some(*timeout),
+                None,
+                None,
+                None,
+            ),
+            MonitorDetail::Tcp {
+                host,
+                port,
+                timeout,
+            } => (
+                "tcp",
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(host.clone()),
+                Some(*port),
                 Some(*timeout),
             ),
         }
@@ -573,6 +662,11 @@ impl MonitorDetail {
                 host: row.get("ping_host")?,
                 count: row.get("ping_count")?,
                 timeout: row.get("ping_timeout")?,
+            }),
+            "tcp" => Ok(MonitorDetail::Tcp {
+                host: row.get("tcp_host")?,
+                port: row.get("tcp_port")?,
+                timeout: row.get("tcp_timeout")?,
             }),
             _ => Err(rusqlite::Error::InvalidColumnType(
                 0,

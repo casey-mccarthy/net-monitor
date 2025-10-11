@@ -17,14 +17,20 @@ pub enum MonitorDetail {
         count: u32,
         timeout: u64,
     },
+    Tcp {
+        host: String,
+        port: u16,
+        timeout: u64,
+    },
 }
 
 impl MonitorDetail {
     /// Get the connection target for this monitor type
-    pub fn get_connection_target(&self) -> &str {
+    pub fn get_connection_target(&self) -> String {
         match self {
-            MonitorDetail::Http { url, .. } => url,
-            MonitorDetail::Ping { host, .. } => host,
+            MonitorDetail::Http { url, .. } => url.clone(),
+            MonitorDetail::Ping { host, .. } => host.clone(),
+            MonitorDetail::Tcp { host, port, .. } => format!("{}:{}", host, port),
         }
     }
 
@@ -33,6 +39,7 @@ impl MonitorDetail {
         match self {
             MonitorDetail::Http { .. } => ConnectionType::Http,
             MonitorDetail::Ping { .. } => ConnectionType::Ping,
+            MonitorDetail::Tcp { .. } => ConnectionType::Tcp,
         }
     }
 }
@@ -42,6 +49,7 @@ impl fmt::Display for MonitorDetail {
         match self {
             MonitorDetail::Http { .. } => write!(f, "HTTP"),
             MonitorDetail::Ping { .. } => write!(f, "Ping"),
+            MonitorDetail::Tcp { .. } => write!(f, "TCP"),
         }
     }
 }
