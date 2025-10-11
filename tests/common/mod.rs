@@ -50,7 +50,7 @@ impl NodeBuilder {
         Self {
             name: "Test Node".to_string(),
             detail: None,
-            status: NodeStatus::Unknown,
+            status: NodeStatus::Offline,
             last_check: None,
             response_time: None,
             monitoring_interval: 60,

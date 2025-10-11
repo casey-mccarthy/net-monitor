@@ -53,8 +53,6 @@ pub enum NodeStatus {
     Online,
     /// Node is offline or not responding
     Offline,
-    /// Status is unknown (e.g., monitoring disabled)
-    Unknown,
 }
 
 impl fmt::Display for NodeStatus {
@@ -62,7 +60,6 @@ impl fmt::Display for NodeStatus {
         match self {
             NodeStatus::Online => write!(f, "Online"),
             NodeStatus::Offline => write!(f, "Offline"),
-            NodeStatus::Unknown => write!(f, "Unknown"),
         }
     }
 }
@@ -116,4 +113,49 @@ pub struct NodeImport {
     pub monitoring_interval: u64,
     /// Optional credential reference for connections
     pub credential_id: Option<CredentialId>,
+}
+
+/// Represents a status change event for a node
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusChange {
+    /// Unique identifier for the status change
+    pub id: Option<i64>,
+    /// ID of the node that changed status
+    pub node_id: i64,
+    /// Previous status before the change
+    pub from_status: NodeStatus,
+    /// New status after the change
+    pub to_status: NodeStatus,
+    /// When the status change occurred
+    pub changed_at: DateTime<Utc>,
+    /// Duration in milliseconds spent in the previous status (None for first status)
+    pub duration_ms: Option<i64>,
+}
+
+impl StatusChange {
+    /// Calculate duration in milliseconds between two timestamps
+    pub fn calculate_duration(from: DateTime<Utc>, to: DateTime<Utc>) -> i64 {
+        (to - from).num_milliseconds()
+    }
+
+    /// Check if this is a transition to/from an error state
+    pub fn is_degradation(&self) -> bool {
+        matches!(
+            (self.from_status, self.to_status),
+            (NodeStatus::Online, NodeStatus::Offline)
+        )
+    }
+
+    /// Check if this is a recovery to a healthy state
+    pub fn is_recovery(&self) -> bool {
+        matches!(
+            (self.from_status, self.to_status),
+            (NodeStatus::Offline, NodeStatus::Online)
+        )
+    }
+
+    /// Get a human-readable description of the status change
+    pub fn description(&self) -> String {
+        format!("{} → {}", self.from_status, self.to_status)
+    }
 }

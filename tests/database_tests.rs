@@ -1,8 +1,8 @@
 mod common;
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use common::{assertions, fixtures, NodeBuilder, TestDatabase};
-use net_monitor::models::{MonitorDetail, MonitoringResult, NodeStatus};
+use net_monitor::models::{MonitorDetail, MonitoringResult, NodeStatus, StatusChange};
 
 #[test]
 fn test_database_persistence() {
@@ -287,13 +287,14 @@ fn test_node_status_parsing() {
         "Offline".parse::<NodeStatus>().unwrap(),
         NodeStatus::Offline
     );
+    // Unknown and invalid strings default to Offline
     assert_eq!(
         "Unknown".parse::<NodeStatus>().unwrap(),
-        NodeStatus::Unknown
+        NodeStatus::Offline
     );
     assert_eq!(
         "Invalid".parse::<NodeStatus>().unwrap(),
-        NodeStatus::Unknown
+        NodeStatus::Offline
     );
 }
 
@@ -328,4 +329,302 @@ fn test_node_with_last_check() {
     // Allow for small time differences due to database operations
     let time_diff = (nodes[0].last_check.unwrap() - now).num_seconds().abs();
     assert!(time_diff < 5);
+}
+
+// ========== Status Change Tests ==========
+
+#[test]
+fn test_add_status_change() {
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    let status_change = StatusChange {
+        id: None,
+        node_id,
+        from_status: NodeStatus::Offline,
+        to_status: NodeStatus::Online,
+        changed_at: Utc::now(),
+        duration_ms: None,
+    };
+
+    let change_id = test_db.db.add_status_change(&status_change).unwrap();
+    assert!(change_id > 0);
+}
+
+#[test]
+fn test_get_status_changes() {
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    // Add multiple status changes
+    let now = Utc::now();
+    let changes = vec![
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Offline,
+            to_status: NodeStatus::Online,
+            changed_at: now - Duration::seconds(300),
+            duration_ms: None,
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Online,
+            to_status: NodeStatus::Offline,
+            changed_at: now - Duration::seconds(200),
+            duration_ms: Some(100000),
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Offline,
+            to_status: NodeStatus::Online,
+            changed_at: now - Duration::seconds(100),
+            duration_ms: Some(100000),
+        },
+    ];
+
+    for change in &changes {
+        test_db.db.add_status_change(change).unwrap();
+    }
+
+    // Get all status changes
+    let retrieved = test_db.db.get_status_changes(node_id, None).unwrap();
+    assert_eq!(retrieved.len(), 3);
+
+    // Verify they're ordered by most recent first
+    assert_eq!(retrieved[0].to_status, NodeStatus::Online);
+    assert_eq!(retrieved[1].to_status, NodeStatus::Offline);
+    assert_eq!(retrieved[2].to_status, NodeStatus::Online);
+
+    // Get limited status changes
+    let limited = test_db.db.get_status_changes(node_id, Some(2)).unwrap();
+    assert_eq!(limited.len(), 2);
+}
+
+#[test]
+fn test_get_latest_status_change() {
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    // Initially, no status changes
+    let latest = test_db.db.get_latest_status_change(node_id).unwrap();
+    assert!(latest.is_none());
+
+    // Add a status change
+    let now = Utc::now();
+    let status_change = StatusChange {
+        id: None,
+        node_id,
+        from_status: NodeStatus::Offline,
+        to_status: NodeStatus::Online,
+        changed_at: now,
+        duration_ms: None,
+    };
+    test_db.db.add_status_change(&status_change).unwrap();
+
+    // Get the latest
+    let latest = test_db.db.get_latest_status_change(node_id).unwrap();
+    assert!(latest.is_some());
+    let latest_change = latest.unwrap();
+    assert_eq!(latest_change.to_status, NodeStatus::Online);
+
+    // Add another status change
+    let second_change = StatusChange {
+        id: None,
+        node_id,
+        from_status: NodeStatus::Online,
+        to_status: NodeStatus::Offline,
+        changed_at: now + Duration::seconds(60),
+        duration_ms: Some(60000),
+    };
+    test_db.db.add_status_change(&second_change).unwrap();
+
+    // Latest should now be Offline
+    let latest = test_db.db.get_latest_status_change(node_id).unwrap();
+    assert!(latest.is_some());
+    assert_eq!(latest.unwrap().to_status, NodeStatus::Offline);
+}
+
+#[test]
+fn test_get_current_status_duration() {
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    // No status changes yet
+    let duration = test_db.db.get_current_status_duration(node_id).unwrap();
+    assert!(duration.is_none());
+
+    // Add a status change 5 seconds ago
+    let changed_at = Utc::now() - Duration::seconds(5);
+    let status_change = StatusChange {
+        id: None,
+        node_id,
+        from_status: NodeStatus::Offline,
+        to_status: NodeStatus::Online,
+        changed_at,
+        duration_ms: None,
+    };
+    test_db.db.add_status_change(&status_change).unwrap();
+
+    // Duration should be approximately 5000ms
+    let duration = test_db.db.get_current_status_duration(node_id).unwrap();
+    assert!(duration.is_some());
+    let duration_ms = duration.unwrap();
+    // Allow for some variance due to test execution time
+    assert!((4500..=6000).contains(&duration_ms));
+}
+
+#[test]
+fn test_calculate_uptime_percentage() {
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    let start_time = Utc::now() - Duration::seconds(1000);
+    let end_time = Utc::now();
+
+    // No status changes - should return 100% (assumes node is online)
+    let uptime = test_db
+        .db
+        .calculate_uptime_percentage(node_id, start_time, end_time)
+        .unwrap();
+    assert_eq!(uptime, 100.0);
+
+    // Add status changes: Offline for 300s in the middle
+    // Timeline: Online (400s) -> Offline (300s) -> Online (300s)
+    let changes = vec![
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Offline,
+            to_status: NodeStatus::Online,
+            changed_at: start_time,
+            duration_ms: None,
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Online,
+            to_status: NodeStatus::Offline,
+            changed_at: start_time + Duration::seconds(400),
+            duration_ms: Some(400000),
+        },
+        StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Offline,
+            to_status: NodeStatus::Online,
+            changed_at: start_time + Duration::seconds(700),
+            duration_ms: Some(300000),
+        },
+    ];
+
+    for change in &changes {
+        test_db.db.add_status_change(change).unwrap();
+    }
+
+    // Uptime should be 100% - (300s offline / 1000s total * 100%) = 70%
+    let uptime = test_db
+        .db
+        .calculate_uptime_percentage(node_id, start_time, end_time)
+        .unwrap();
+    // Allow for small variance
+    assert!((uptime - 70.0).abs() < 1.0, "Expected ~70%, got {}", uptime);
+}
+
+#[test]
+fn test_status_change_with_duration() {
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    let status_change = StatusChange {
+        id: None,
+        node_id,
+        from_status: NodeStatus::Online,
+        to_status: NodeStatus::Offline,
+        changed_at: Utc::now(),
+        duration_ms: Some(120000), // 2 minutes
+    };
+
+    test_db.db.add_status_change(&status_change).unwrap();
+
+    let changes = test_db.db.get_status_changes(node_id, None).unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].duration_ms, Some(120000));
+}
+
+#[test]
+fn test_status_change_helper_methods() {
+    // Test is_degradation
+    let degradation = StatusChange {
+        id: None,
+        node_id: 1,
+        from_status: NodeStatus::Online,
+        to_status: NodeStatus::Offline,
+        changed_at: Utc::now(),
+        duration_ms: None,
+    };
+    assert!(degradation.is_degradation());
+    assert!(!degradation.is_recovery());
+
+    // Test is_recovery
+    let recovery = StatusChange {
+        id: None,
+        node_id: 1,
+        from_status: NodeStatus::Offline,
+        to_status: NodeStatus::Online,
+        changed_at: Utc::now(),
+        duration_ms: None,
+    };
+    assert!(recovery.is_recovery());
+    assert!(!recovery.is_degradation());
+
+    // Test description
+    assert_eq!(degradation.description(), "Online → Offline");
+    assert_eq!(recovery.description(), "Offline → Online");
+}
+
+#[test]
+fn test_status_change_calculate_duration() {
+    let start = Utc::now();
+    let end = start + Duration::seconds(120);
+
+    let duration_ms = StatusChange::calculate_duration(start, end);
+    assert_eq!(duration_ms, 120000); // 120 seconds = 120000 milliseconds
+}
+
+#[test]
+fn test_status_changes_cascade_delete() {
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    // Add status changes
+    let status_change = StatusChange {
+        id: None,
+        node_id,
+        from_status: NodeStatus::Offline,
+        to_status: NodeStatus::Online,
+        changed_at: Utc::now(),
+        duration_ms: None,
+    };
+    test_db.db.add_status_change(&status_change).unwrap();
+
+    // Verify status change exists
+    let changes = test_db.db.get_status_changes(node_id, None).unwrap();
+    assert_eq!(changes.len(), 1);
+
+    // Delete the node
+    test_db.db.delete_node(node_id).unwrap();
+
+    // Status changes should be cascaded deleted
+    let changes = test_db.db.get_status_changes(node_id, None).unwrap();
+    assert_eq!(changes.len(), 0);
 }

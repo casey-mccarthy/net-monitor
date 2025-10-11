@@ -3,9 +3,10 @@ use crate::credentials::{
     CredentialStore, CredentialSummary, FileCredentialStore, SensitiveString, SshCredential,
 };
 use crate::database::Database;
-use crate::models::{MonitorDetail, Node, NodeImport, NodeStatus};
+use crate::models::{MonitorDetail, Node, NodeImport, NodeStatus, StatusChange};
 use crate::monitor::check_node;
 use anyhow::Result;
+use chrono::Utc;
 use directories::ProjectDirs;
 use eframe::egui::{self, Color32, Context, Grid, RichText, ScrollArea, Ui, Window};
 use rfd::FileDialog;
@@ -75,7 +76,7 @@ impl Default for NodeForm {
         Self {
             name: String::new(),
             monitor_type: MonitorTypeForm::Http,
-            monitoring_interval: "60".to_string(),
+            monitoring_interval: "5".to_string(),
             credential_id: None,
             http_url: "https://".to_string(),
             http_expected_status: "200".to_string(),
@@ -181,6 +182,8 @@ pub struct NetworkMonitorApp {
     editing_credential: Option<String>,
     new_credential_form: CredentialForm,
     pending_credential_action: Option<CredentialAction>,
+    // Status change history
+    show_status_history: Option<i64>, // Node ID whose history to show
 }
 
 struct MonitoringHandle {
@@ -211,7 +214,7 @@ impl NetworkMonitorApp {
         // Load existing credentials
         let credentials = credential_store.list_credentials().unwrap_or_default();
 
-        Ok(Self {
+        let mut app = Self {
             database,
             nodes,
             editing_node: None,
@@ -230,7 +233,14 @@ impl NetworkMonitorApp {
             editing_credential: None,
             new_credential_form: CredentialForm::default(),
             pending_credential_action: None,
-        })
+            show_status_history: None,
+        };
+
+        // Start monitoring automatically on launch
+        app.start_monitoring();
+        info!("Monitoring started automatically on application launch");
+
+        Ok(app)
     }
 }
 
@@ -262,6 +272,7 @@ impl eframe::App for NetworkMonitorApp {
         self.show_credentials_window(ctx);
         self.show_add_credential_window(ctx);
         self.show_about_window(ctx);
+        self.show_status_history_window(ctx);
 
         // Process pending credential actions
         self.process_pending_credential_action();
@@ -272,9 +283,36 @@ impl eframe::App for NetworkMonitorApp {
 
 impl NetworkMonitorApp {
     fn show_main_window(&mut self, ctx: &Context) {
-        // Add menu bar
+        // Application menu bar
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
+                // File menu
+                ui.menu_button("File", |ui| {
+                    if ui.button("Import Nodes...").clicked() {
+                        self.import_nodes();
+                        ui.close();
+                    }
+                    if ui.button("Export Nodes...").clicked() {
+                        self.export_nodes();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Open Log File").clicked() {
+                        self.open_log_file();
+                        ui.close();
+                    }
+                });
+
+                // Settings menu
+                ui.menu_button("Settings", |ui| {
+                    if ui.button("Credentials...").clicked() {
+                        self.show_credentials = true;
+                        self.reload_credentials();
+                        ui.close();
+                    }
+                });
+
+                // Help menu
                 ui.menu_button("Help", |ui| {
                     if ui.button("About").clicked() {
                         self.show_about = true;
@@ -289,26 +327,13 @@ impl NetworkMonitorApp {
             ui.horizontal_centered(|ui| {
                 ui.set_max_width(800.0); // Set a reasonable maximum width
                 ui.vertical(|ui| {
-                    ui.heading("Network Monitor");
-                    ui.separator();
+                    // Toolbar with view-specific actions
                     ui.horizontal(|ui| {
                         if ui.button("Add Node").clicked() {
                             self.show_add_node = true;
                             self.new_node_form = NodeForm::default();
                         }
-                        if ui.button("Credentials").clicked() {
-                            self.show_credentials = true;
-                            self.reload_credentials();
-                        }
-                        if ui.button("Import Nodes").clicked() {
-                            self.import_nodes();
-                        }
-                        if ui.button("Export Nodes").clicked() {
-                            self.export_nodes();
-                        }
-                        if ui.button("Open Log").clicked() {
-                            self.open_log_file();
-                        }
+                        ui.separator();
                         self.monitoring_toggle_button(ui);
                     });
                     ui.separator();
@@ -369,7 +394,6 @@ impl NetworkMonitorApp {
                         let status_color = match node.status {
                             NodeStatus::Online => Color32::GREEN,
                             NodeStatus::Offline => Color32::RED,
-                            NodeStatus::Unknown => Color32::YELLOW,
                         };
                         ui.colored_label(status_color, node.status.to_string());
 
@@ -445,6 +469,9 @@ impl NetworkMonitorApp {
                         }
 
                         ui.horizontal(|ui| {
+                            if ui.button("History").clicked() {
+                                action = Some(NodeAction::ViewHistory(i));
+                            }
                             if ui.button("Edit").clicked() {
                                 action = Some(NodeAction::Edit(i));
                             }
@@ -584,10 +611,10 @@ impl NetworkMonitorApp {
                     id: None,
                     name: form.name.clone(),
                     detail,
-                    status: NodeStatus::Unknown,
+                    status: NodeStatus::Offline,
                     last_check: None,
                     response_time: None,
-                    monitoring_interval: form.monitoring_interval.parse().unwrap_or(60),
+                    monitoring_interval: form.monitoring_interval.parse().unwrap_or(5),
                     credential_id: form.credential_id.clone(),
                 };
                 match self.database.add_node(&node) {
@@ -627,7 +654,7 @@ impl NetworkMonitorApp {
                 if let Some(node) = self.nodes.iter_mut().find(|n| n.id == Some(node_id)) {
                     node.name = form.name.clone();
                     node.detail = detail;
-                    node.monitoring_interval = form.monitoring_interval.parse().unwrap_or(60);
+                    node.monitoring_interval = form.monitoring_interval.parse().unwrap_or(5);
                     node.credential_id = form.credential_id.clone();
 
                     if let Err(e) = self.database.update_node(node) {
@@ -683,6 +710,13 @@ impl NetworkMonitorApp {
                         } else {
                             error!("Failed to delete node with id {}", id);
                         }
+                    }
+                }
+            }
+            NodeAction::ViewHistory(index) => {
+                if let Some(node) = self.nodes.get(index) {
+                    if let Some(id) = node.id {
+                        self.show_status_history = Some(id);
                     }
                 }
             }
@@ -872,7 +906,10 @@ impl NetworkMonitorApp {
             {
                 self.stop_monitoring();
             }
-        } else if ui.button("Start Monitoring").clicked() {
+        } else if ui
+            .button(RichText::new("Start Monitoring").color(Color32::GREEN))
+            .clicked()
+        {
             self.start_monitoring();
         }
     }
@@ -888,7 +925,13 @@ impl NetworkMonitorApp {
 
         let thread = thread::spawn(move || {
             let mut last_check_times: HashMap<i64, Instant> = HashMap::new();
-            let mut previous_statuses: HashMap<i64, NodeStatus> = HashMap::new();
+            // Initialize previous_statuses with all nodes starting as Offline
+            // This ensures first successful check will be Offline → Online and get recorded
+            let mut previous_statuses: HashMap<i64, NodeStatus> = initial_nodes
+                .iter()
+                .filter_map(|n| n.id.map(|id| (id, NodeStatus::Offline)))
+                .collect();
+            let mut last_status_change_times: HashMap<i64, chrono::DateTime<Utc>> = HashMap::new();
             let mut current_nodes = initial_nodes.clone();
             let runtime = tokio::runtime::Runtime::new().unwrap();
 
@@ -899,6 +942,10 @@ impl NetworkMonitorApp {
                         NodeConfigUpdate::Add(node) => {
                             info!("Adding new node to monitoring: {}", node.name);
                             if !current_nodes.iter().any(|n| n.id == node.id) {
+                                // Initialize new node's previous status as Offline
+                                if let Some(node_id) = node.id {
+                                    previous_statuses.insert(node_id, NodeStatus::Offline);
+                                }
                                 current_nodes.push(node);
                             }
                         }
@@ -928,6 +975,7 @@ impl NetworkMonitorApp {
                             current_nodes.retain(|n| n.id != Some(node_id));
                             last_check_times.remove(&node_id);
                             previous_statuses.remove(&node_id);
+                            last_status_change_times.remove(&node_id);
                         }
                     }
                 }
@@ -963,12 +1011,9 @@ impl NetworkMonitorApp {
                                     NodeStatus::Offline => {
                                         info!("Node '{}' checked - Status: DOWN", node.name);
                                     }
-                                    NodeStatus::Unknown => {
-                                        info!("Node '{}' checked - Status: UNKNOWN", node.name);
-                                    }
                                 }
 
-                                // Log status changes
+                                // Log status changes and record in database
                                 if let Some(prev_status) = previous_status {
                                     if prev_status != new_status {
                                         match (prev_status, new_status) {
@@ -984,32 +1029,44 @@ impl NetworkMonitorApp {
                                                     node.name
                                                 );
                                             }
-                                            (NodeStatus::Unknown, NodeStatus::Online) => {
-                                                info!(
-                                                    "Node '{}' is now UP (was UNKNOWN)",
-                                                    node.name
-                                                );
-                                            }
-                                            (NodeStatus::Unknown, NodeStatus::Offline) => {
-                                                error!(
-                                                    "Node '{}' is now DOWN (was UNKNOWN)",
-                                                    node.name
-                                                );
-                                            }
-                                            (NodeStatus::Online, NodeStatus::Unknown) => {
-                                                error!(
-                                                    "Node '{}' status is now UNKNOWN (was UP)",
-                                                    node.name
-                                                );
-                                            }
-                                            (NodeStatus::Offline, NodeStatus::Unknown) => {
-                                                error!(
-                                                    "Node '{}' status is now UNKNOWN (was DOWN)",
-                                                    node.name
-                                                );
-                                            }
                                             _ => {}
                                         }
+
+                                        // Record the status change in the database
+                                        let current_time = Utc::now();
+                                        let duration_ms = last_status_change_times
+                                            .get(&node_id)
+                                            .map(|last_change| {
+                                                StatusChange::calculate_duration(
+                                                    *last_change,
+                                                    current_time,
+                                                )
+                                            });
+
+                                        let status_change = StatusChange {
+                                            id: None,
+                                            node_id,
+                                            from_status: prev_status,
+                                            to_status: new_status,
+                                            changed_at: current_time,
+                                            duration_ms,
+                                        };
+
+                                        if let Err(e) = db.add_status_change(&status_change) {
+                                            error!("Failed to save status change: {}", e);
+                                        } else {
+                                            info!(
+                                                "Status change recorded: {} → {} (duration: {}ms)",
+                                                prev_status,
+                                                new_status,
+                                                duration_ms
+                                                    .map(|d| d.to_string())
+                                                    .unwrap_or_else(|| "N/A".to_string())
+                                            );
+                                        }
+
+                                        // Update the last status change time
+                                        last_status_change_times.insert(node_id, current_time);
                                     }
                                 }
 
@@ -1083,7 +1140,7 @@ impl NetworkMonitorApp {
                                 id: None,
                                 name: import.name,
                                 detail: import.detail,
-                                status: NodeStatus::Unknown,
+                                status: NodeStatus::Offline,
                                 last_check: None,
                                 response_time: None,
                                 monitoring_interval: import.monitoring_interval,
@@ -1652,12 +1709,216 @@ impl NetworkMonitorApp {
             }
         }
     }
+
+    fn show_status_history_window(&mut self, ctx: &egui::Context) {
+        if let Some(node_id) = self.show_status_history {
+            let mut is_open = true;
+
+            // Find the node name
+            let node_name = self
+                .nodes
+                .iter()
+                .find(|n| n.id == Some(node_id))
+                .map(|n| n.name.clone())
+                .unwrap_or_else(|| format!("Node {}", node_id));
+
+            egui::Window::new(format!("Status History - {}", node_name))
+                .resizable(true)
+                .collapsible(false)
+                .default_width(700.0)
+                .default_height(500.0)
+                .open(&mut is_open)
+                .show(ctx, |ui| {
+                    ui.vertical(|ui| {
+                        // Current Status Section
+                        ui.heading("Current Status");
+                        ui.add_space(5.0);
+
+                        if let Some(node) = self.nodes.iter().find(|n| n.id == Some(node_id)) {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Status:").strong());
+                                let status_color = match node.status {
+                                    NodeStatus::Online => Color32::GREEN,
+                                    NodeStatus::Offline => Color32::RED,
+                                };
+                                ui.colored_label(status_color, node.status.to_string());
+                            });
+
+                            if let Some(last_check) = node.last_check {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("Last Check:").strong());
+                                    ui.label(
+                                        last_check
+                                            .with_timezone(&chrono::Local)
+                                            .format("%Y-%m-%d %H:%M:%S")
+                                            .to_string(),
+                                    );
+                                });
+                            }
+
+                            // Time in current status
+                            if let Ok(Some(duration_ms)) =
+                                self.database.get_current_status_duration(node_id)
+                            {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("Time in Current Status:").strong());
+                                    ui.label(format_duration(duration_ms));
+                                });
+                            }
+                        }
+
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(10.0);
+
+                        // Uptime Statistics Section
+                        ui.heading("Uptime Statistics");
+                        ui.add_space(5.0);
+
+                        // Calculate uptime for different time periods
+                        let now = Utc::now();
+                        let periods = vec![
+                            ("Last 24 Hours", now - chrono::Duration::hours(24)),
+                            ("Last 7 Days", now - chrono::Duration::days(7)),
+                            ("Last 30 Days", now - chrono::Duration::days(30)),
+                        ];
+
+                        for (label, start_time) in periods {
+                            if let Ok(uptime_pct) = self
+                                .database
+                                .calculate_uptime_percentage(node_id, start_time, now)
+                            {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(format!("{}:", label)).strong());
+                                    let color = if uptime_pct >= 99.0 {
+                                        Color32::GREEN
+                                    } else if uptime_pct >= 95.0 {
+                                        Color32::YELLOW
+                                    } else {
+                                        Color32::RED
+                                    };
+                                    ui.colored_label(color, format!("{:.2}%", uptime_pct));
+                                });
+                            }
+                        }
+
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(10.0);
+
+                        // Status Change History Section
+                        ui.heading("Status Change History");
+                        ui.add_space(5.0);
+
+                        // Fetch status changes
+                        match self.database.get_status_changes(node_id, Some(50)) {
+                            Ok(changes) => {
+                                if changes.is_empty() {
+                                    ui.label("No status changes recorded yet.");
+                                } else {
+                                    ScrollArea::vertical().show(ui, |ui| {
+                                        Grid::new("status_change_grid")
+                                            .num_columns(4)
+                                            .spacing([15.0, 8.0])
+                                            .striped(true)
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new("Timestamp").strong());
+                                                ui.label(RichText::new("From").strong());
+                                                ui.label(RichText::new("To").strong());
+                                                ui.label(RichText::new("Duration").strong());
+                                                ui.end_row();
+
+                                                for change in changes {
+                                                    // Timestamp
+                                                    ui.label(
+                                                        change
+                                                            .changed_at
+                                                            .with_timezone(&chrono::Local)
+                                                            .format("%Y-%m-%d %H:%M:%S")
+                                                            .to_string(),
+                                                    );
+
+                                                    // From status
+                                                    let from_color = match change.from_status {
+                                                        NodeStatus::Online => Color32::GREEN,
+                                                        NodeStatus::Offline => Color32::RED,
+                                                    };
+                                                    ui.colored_label(
+                                                        from_color,
+                                                        change.from_status.to_string(),
+                                                    );
+
+                                                    // To status
+                                                    let to_color = match change.to_status {
+                                                        NodeStatus::Online => Color32::GREEN,
+                                                        NodeStatus::Offline => Color32::RED,
+                                                    };
+                                                    ui.colored_label(
+                                                        to_color,
+                                                        change.to_status.to_string(),
+                                                    );
+
+                                                    // Duration
+                                                    if let Some(duration_ms) = change.duration_ms {
+                                                        ui.label(format_duration(duration_ms));
+                                                    } else {
+                                                        ui.label("N/A");
+                                                    }
+
+                                                    ui.end_row();
+                                                }
+                                            });
+                                    });
+                                }
+                            }
+                            Err(e) => {
+                                ui.colored_label(
+                                    Color32::RED,
+                                    format!("Error loading status changes: {}", e),
+                                );
+                            }
+                        }
+
+                        ui.add_space(10.0);
+
+                        ui.horizontal(|ui| {
+                            if ui.button("Close").clicked() {
+                                self.show_status_history = None;
+                            }
+                        });
+                    });
+                });
+
+            if !is_open {
+                self.show_status_history = None;
+            }
+        }
+    }
+}
+
+// Helper function to format duration in milliseconds to human-readable string
+fn format_duration(duration_ms: i64) -> String {
+    let seconds = duration_ms / 1000;
+    let minutes = seconds / 60;
+    let hours = minutes / 60;
+    let days = hours / 24;
+
+    if days > 0 {
+        format!("{}d {}h", days, hours % 24)
+    } else if hours > 0 {
+        format!("{}h {}m", hours, minutes % 60)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, seconds % 60)
+    } else {
+        format!("{}s", seconds)
+    }
 }
 
 enum NodeAction {
     Edit(usize),
     Delete(usize),
     Connect(usize),
+    ViewHistory(usize),
 }
 
 enum CredentialAction {

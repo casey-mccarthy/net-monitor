@@ -1,4 +1,4 @@
-use crate::models::{MonitorDetail, MonitoringResult, Node, NodeStatus};
+use crate::models::{MonitorDetail, MonitoringResult, Node, NodeStatus, StatusChange};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Row};
@@ -36,7 +36,7 @@ impl Database {
                 status TEXT NOT NULL,
                 last_check TEXT,
                 response_time INTEGER,
-                monitoring_interval INTEGER NOT NULL DEFAULT 60,
+                monitoring_interval INTEGER NOT NULL DEFAULT 5,
                 credential_id TEXT,
                 http_url TEXT,
                 http_expected_status INTEGER,
@@ -60,8 +60,34 @@ impl Database {
             [],
         )?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS status_changes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id INTEGER NOT NULL,
+                from_status TEXT NOT NULL,
+                to_status TEXT NOT NULL,
+                changed_at TEXT NOT NULL,
+                duration_ms INTEGER,
+                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+
+        // Create indexes for efficient queries
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_status_changes_node_id ON status_changes(node_id)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_status_changes_changed_at ON status_changes(changed_at)",
+            [],
+        )?;
+
         // Add credential_id column to existing nodes table if it doesn't exist
         self.migrate_credential_column(&conn)?;
+
+        // Migrate Unknown status to Offline
+        self.migrate_unknown_status(&conn)?;
 
         Ok(())
     }
@@ -80,6 +106,51 @@ impl Database {
         if !column_exists {
             conn.execute("ALTER TABLE nodes ADD COLUMN credential_id TEXT", [])?;
             info!("Added credential_id column to nodes table");
+        }
+
+        Ok(())
+    }
+
+    /// Migrate Unknown status to Offline in existing data
+    fn migrate_unknown_status(&self, conn: &Connection) -> Result<()> {
+        // Update nodes table
+        let nodes_updated = conn.execute(
+            "UPDATE nodes SET status = 'Offline' WHERE status = 'Unknown'",
+            [],
+        )?;
+        if nodes_updated > 0 {
+            info!(
+                "Migrated {} node(s) from Unknown to Offline status",
+                nodes_updated
+            );
+        }
+
+        // Update monitoring_results table
+        let results_updated = conn.execute(
+            "UPDATE monitoring_results SET status = 'Offline' WHERE status = 'Unknown'",
+            [],
+        )?;
+        if results_updated > 0 {
+            info!(
+                "Migrated {} monitoring result(s) from Unknown to Offline status",
+                results_updated
+            );
+        }
+
+        // Update status_changes table
+        let from_updated = conn.execute(
+            "UPDATE status_changes SET from_status = 'Offline' WHERE from_status = 'Unknown'",
+            [],
+        )?;
+        let to_updated = conn.execute(
+            "UPDATE status_changes SET to_status = 'Offline' WHERE to_status = 'Unknown'",
+            [],
+        )?;
+        if from_updated > 0 || to_updated > 0 {
+            info!(
+                "Migrated {} status change(s) from Unknown to Offline",
+                from_updated + to_updated
+            );
         }
 
         Ok(())
@@ -188,6 +259,161 @@ impl Database {
         Ok(conn.last_insert_rowid())
     }
 
+    /// Adds a status change event to the database
+    pub fn add_status_change(&self, change: &StatusChange) -> Result<i64> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO status_changes (node_id, from_status, to_status, changed_at, duration_ms)
+             VALUES (?, ?, ?, ?, ?)",
+            params![
+                change.node_id,
+                change.from_status.to_string(),
+                change.to_status.to_string(),
+                change.changed_at.to_rfc3339(),
+                change.duration_ms,
+            ],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Retrieves status changes for a node, ordered by most recent first
+    pub fn get_status_changes(
+        &self,
+        node_id: i64,
+        limit: Option<usize>,
+    ) -> Result<Vec<StatusChange>> {
+        let conn = self.get_connection()?;
+        let query = if let Some(limit) = limit {
+            format!(
+                "SELECT id, node_id, from_status, to_status, changed_at, duration_ms
+                 FROM status_changes
+                 WHERE node_id = ?
+                 ORDER BY changed_at DESC
+                 LIMIT {}",
+                limit
+            )
+        } else {
+            "SELECT id, node_id, from_status, to_status, changed_at, duration_ms
+             FROM status_changes
+             WHERE node_id = ?
+             ORDER BY changed_at DESC"
+                .to_string()
+        };
+
+        let mut stmt = conn.prepare(&query)?;
+        let changes = stmt.query_map([node_id], |row| self.row_to_status_change(row))?;
+        changes
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    /// Gets the most recent status change for a node
+    pub fn get_latest_status_change(&self, node_id: i64) -> Result<Option<StatusChange>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, node_id, from_status, to_status, changed_at, duration_ms
+             FROM status_changes
+             WHERE node_id = ?
+             ORDER BY changed_at DESC
+             LIMIT 1",
+        )?;
+
+        let mut changes = stmt.query_map([node_id], |row| self.row_to_status_change(row))?;
+        match changes.next() {
+            Some(Ok(change)) => Ok(Some(change)),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    /// Calculate how long the node has been in its current status
+    pub fn get_current_status_duration(&self, node_id: i64) -> Result<Option<i64>> {
+        if let Some(latest_change) = self.get_latest_status_change(node_id)? {
+            let duration_ms =
+                StatusChange::calculate_duration(latest_change.changed_at, Utc::now());
+            Ok(Some(duration_ms))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Calculate uptime percentage over a time period
+    /// Returns percentage (0.0 - 100.0) of time the node was Online
+    ///
+    /// Starts at 100% and decrements based on time spent offline.
+    /// This provides a more realistic representation for newly added nodes:
+    /// - No status changes = 100% uptime (assumed online)
+    /// - With outages = 100% - (offline_time / total_period * 100%)
+    pub fn calculate_uptime_percentage(
+        &self,
+        node_id: i64,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+    ) -> Result<f64> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT from_status, to_status, changed_at, duration_ms
+             FROM status_changes
+             WHERE node_id = ? AND changed_at >= ? AND changed_at <= ?
+             ORDER BY changed_at ASC",
+        )?;
+
+        let changes: Vec<StatusChange> = stmt
+            .query_map(
+                params![node_id, start_time.to_rfc3339(), end_time.to_rfc3339()],
+                |row| {
+                    let from_status: String = row.get(0)?;
+                    let to_status: String = row.get(1)?;
+                    let changed_at_str: String = row.get(2)?;
+                    let duration_ms: Option<i64> = row.get(3)?;
+
+                    let changed_at = DateTime::parse_from_rfc3339(&changed_at_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+                    Ok(StatusChange {
+                        id: None,
+                        node_id,
+                        from_status: from_status.parse().unwrap_or(NodeStatus::Offline),
+                        to_status: to_status.parse().unwrap_or(NodeStatus::Offline),
+                        changed_at,
+                        duration_ms,
+                    })
+                },
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        // If no status changes, assume 100% uptime (node is online)
+        if changes.is_empty() {
+            return Ok(100.0);
+        }
+
+        let total_duration = StatusChange::calculate_duration(start_time, end_time);
+        let mut offline_duration = 0i64;
+
+        // Calculate time spent offline by summing duration_ms for all Offline periods
+        for change in &changes {
+            if change.from_status == NodeStatus::Offline {
+                if let Some(duration) = change.duration_ms {
+                    offline_duration += duration;
+                }
+            }
+        }
+
+        // Handle the last status if it was Offline (node is currently offline)
+        if let Some(last_change) = changes.last() {
+            if last_change.to_status == NodeStatus::Offline {
+                offline_duration +=
+                    StatusChange::calculate_duration(last_change.changed_at, end_time);
+            }
+        }
+
+        // Calculate uptime as 100% minus the percentage of time spent offline
+        let offline_percentage = (offline_duration as f64 / total_duration as f64) * 100.0;
+        let uptime_percentage = 100.0 - offline_percentage;
+        Ok(uptime_percentage.clamp(0.0, 100.0))
+    }
+
     /// Converts a database row to a Node struct
     fn row_to_node(&self, row: &Row) -> std::result::Result<Node, rusqlite::Error> {
         let detail = MonitorDetail::from_row(row)?;
@@ -202,11 +428,34 @@ impl Database {
             id: row.get("id")?,
             name: row.get("name")?,
             detail,
-            status: status.parse().unwrap_or(NodeStatus::Unknown),
+            status: status.parse().unwrap_or(NodeStatus::Offline),
             last_check,
             response_time: row.get("response_time")?,
             monitoring_interval: row.get("monitoring_interval")?,
             credential_id: row.get("credential_id")?,
+        })
+    }
+
+    /// Converts a database row to a StatusChange struct
+    fn row_to_status_change(
+        &self,
+        row: &Row,
+    ) -> std::result::Result<StatusChange, rusqlite::Error> {
+        let from_status: String = row.get("from_status")?;
+        let to_status: String = row.get("to_status")?;
+        let changed_at_str: String = row.get("changed_at")?;
+
+        let changed_at = DateTime::parse_from_rfc3339(&changed_at_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+        Ok(StatusChange {
+            id: row.get("id")?,
+            node_id: row.get("node_id")?,
+            from_status: from_status.parse().unwrap_or(NodeStatus::Offline),
+            to_status: to_status.parse().unwrap_or(NodeStatus::Offline),
+            changed_at,
+            duration_ms: row.get("duration_ms")?,
         })
     }
 }
@@ -276,7 +525,7 @@ impl std::str::FromStr for NodeStatus {
         match s {
             "Online" => Ok(NodeStatus::Online),
             "Offline" => Ok(NodeStatus::Offline),
-            _ => Ok(NodeStatus::Unknown),
+            _ => Ok(NodeStatus::Offline), // Default to Offline for unknown strings
         }
     }
 }
