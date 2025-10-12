@@ -263,6 +263,8 @@ pub struct NetworkMonitorTui {
     delete_credential_index: Option<usize>,
     // Import/Export
     import_export_path: String,
+    // Auto-hide selection
+    last_input_time: Option<Instant>,
 }
 
 impl NetworkMonitorTui {
@@ -305,6 +307,7 @@ impl NetworkMonitorTui {
             delete_node_index: None,
             delete_credential_index: None,
             import_export_path: String::new(),
+            last_input_time: Some(Instant::now()),
         };
 
         // Select first node if any exist
@@ -369,6 +372,13 @@ impl NetworkMonitorTui {
             if let Some((_, timestamp)) = self.status_message {
                 if now.duration_since(timestamp).as_secs() > 5 {
                     self.status_message = None;
+                }
+            }
+
+            // Auto-hide selection highlight after 5 seconds of inactivity
+            if let Some(last_input) = self.last_input_time {
+                if now.duration_since(last_input).as_secs() >= 5 {
+                    self.last_input_time = None;
                 }
             }
 
@@ -607,6 +617,17 @@ impl NetworkMonitorTui {
             })
             .collect();
 
+        // Conditionally apply gray background highlight based on input activity
+        let highlight_style = if self.last_input_time.is_some() {
+            // Show gray background when there has been recent input
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            // Hide gray background after 5 seconds of inactivity, but keep >> symbol
+            Style::default()
+        };
+
         let table = Table::new(
             rows,
             [
@@ -619,11 +640,7 @@ impl NetworkMonitorTui {
         )
         .header(header)
         .block(Block::default().borders(Borders::ALL).title("Nodes"))
-        .row_highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        )
+        .row_highlight_style(highlight_style)
         .highlight_symbol(">> ");
 
         f.render_stateful_widget(table, content_chunks[1], &mut self.table_state);
@@ -1198,6 +1215,9 @@ impl NetworkMonitorTui {
     // Input handlers continue in next part...
 
     fn handle_main_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
+        // Reset the input timer to show selection highlight
+        self.last_input_time = Some(Instant::now());
+
         match key {
             KeyCode::Char('q') | KeyCode::Char('Q') => {
                 if modifiers.contains(KeyModifiers::CONTROL) {
