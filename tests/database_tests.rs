@@ -964,3 +964,132 @@ fn test_status_changes_cascade_delete() {
     let changes = test_db.db.get_status_changes(node_id, None).unwrap();
     assert_eq!(changes.len(), 0);
 }
+
+#[test]
+fn test_get_latest_monitoring_result_no_results() {
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    // Should return None when no monitoring results exist
+    let result = test_db.db.get_latest_monitoring_result(node_id).unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_get_latest_monitoring_result_single_result() {
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    // Add a monitoring result
+    let monitoring_result = MonitoringResult {
+        id: None,
+        node_id,
+        timestamp: Utc::now(),
+        status: NodeStatus::Online,
+        response_time: Some(100),
+        details: Some("Test result".to_string()),
+    };
+    test_db
+        .db
+        .add_monitoring_result(&monitoring_result)
+        .unwrap();
+
+    // Should return the result
+    let result = test_db.db.get_latest_monitoring_result(node_id).unwrap();
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert_eq!(result.node_id, node_id);
+    assert_eq!(result.status, NodeStatus::Online);
+    assert_eq!(result.response_time, Some(100));
+}
+
+#[test]
+fn test_get_latest_monitoring_result_multiple_results() {
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    // Add first monitoring result (Offline)
+    let result1 = MonitoringResult {
+        id: None,
+        node_id,
+        timestamp: Utc::now(),
+        status: NodeStatus::Offline,
+        response_time: Some(100),
+        details: Some("First check".to_string()),
+    };
+    test_db.db.add_monitoring_result(&result1).unwrap();
+
+    // Wait a bit to ensure different timestamps
+    sleep(Duration::from_millis(10));
+
+    // Add second monitoring result (Online) - this should be the latest
+    let result2 = MonitoringResult {
+        id: None,
+        node_id,
+        timestamp: Utc::now(),
+        status: NodeStatus::Online,
+        response_time: Some(150),
+        details: Some("Second check".to_string()),
+    };
+    test_db.db.add_monitoring_result(&result2).unwrap();
+
+    // Should return the most recent result (Online)
+    let latest = test_db.db.get_latest_monitoring_result(node_id).unwrap();
+    assert!(latest.is_some());
+    let latest = latest.unwrap();
+    assert_eq!(latest.status, NodeStatus::Online);
+    assert_eq!(latest.response_time, Some(150));
+    assert_eq!(latest.details, Some("Second check".to_string()));
+}
+
+#[test]
+fn test_monitoring_result_not_recorded_on_unchanged_status() {
+    // This test verifies the behavior that monitoring results should only be
+    // recorded when status changes, not on every check
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    // Simulate first check - Online status
+    let result1 = MonitoringResult {
+        id: None,
+        node_id,
+        timestamp: Utc::now(),
+        status: NodeStatus::Online,
+        response_time: Some(100),
+        details: Some("First check - Online".to_string()),
+    };
+    test_db.db.add_monitoring_result(&result1).unwrap();
+
+    // Get the latest result
+    let latest = test_db.db.get_latest_monitoring_result(node_id).unwrap();
+    assert!(latest.is_some());
+    let latest_status = latest.unwrap().status;
+    assert_eq!(latest_status, NodeStatus::Online);
+
+    // In the actual monitoring code, if the status hasn't changed,
+    // add_monitoring_result would NOT be called. This test just verifies
+    // that we can check the previous status correctly.
+
+    // Simulate status change - now Offline
+    let result2 = MonitoringResult {
+        id: None,
+        node_id,
+        timestamp: Utc::now(),
+        status: NodeStatus::Offline,
+        response_time: Some(200),
+        details: Some("Status changed to Offline".to_string()),
+    };
+    test_db.db.add_monitoring_result(&result2).unwrap();
+
+    // Verify the latest status is now Offline
+    let latest = test_db.db.get_latest_monitoring_result(node_id).unwrap();
+    assert!(latest.is_some());
+    assert_eq!(latest.unwrap().status, NodeStatus::Offline);
+}

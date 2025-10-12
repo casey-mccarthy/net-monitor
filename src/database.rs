@@ -324,6 +324,42 @@ impl Database {
         Ok(conn.last_insert_rowid())
     }
 
+    /// Gets the most recent monitoring result for a node
+    pub fn get_latest_monitoring_result(&self, node_id: i64) -> Result<Option<MonitoringResult>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, node_id, timestamp, status, response_time, details
+             FROM monitoring_results
+             WHERE node_id = ?
+             ORDER BY timestamp DESC
+             LIMIT 1",
+        )?;
+
+        let mut results = stmt.query_map([node_id], |row| {
+            let status_str: String = row.get("status")?;
+            let timestamp_str: String = row.get("timestamp")?;
+
+            let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+            Ok(MonitoringResult {
+                id: row.get("id")?,
+                node_id: row.get("node_id")?,
+                timestamp,
+                status: status_str.parse().unwrap_or(NodeStatus::Offline),
+                response_time: row.get("response_time")?,
+                details: row.get("details")?,
+            })
+        })?;
+
+        match results.next() {
+            Some(Ok(result)) => Ok(Some(result)),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
     /// Adds a status change event to the database
     pub fn add_status_change(&self, change: &StatusChange) -> Result<i64> {
         let conn = self.get_connection()?;
