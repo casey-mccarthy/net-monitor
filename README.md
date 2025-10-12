@@ -1,35 +1,29 @@
 # Network Monitor
 
-A robust network monitoring application built with Rust and egui for monitoring HTTP endpoints, network hosts, and SSH connections.
+A robust network monitoring application built with Rust for monitoring HTTP endpoints, network hosts, and TCP connections. Available in both GUI and TUI (Terminal User Interface) modes.
 
 ## Features
 
+- **Dual Interface Modes**
+  - GUI mode: Clean, responsive interface built with egui
+  - TUI mode: Terminal-based interface built with ratatui
+  - CLI mode selection with default preferences
+
 - **Multiple Connection Types**
   - HTTP/HTTPS endpoint monitoring with status code validation
+  - TCP port connectivity checking
   - ICMP ping for network host availability
-  - SSH connection testing with key-based authentication
-  
-- **Secure Credential Management**
-  - Encrypted storage for SSH keys and passwords
-  - Support for multiple authentication methods
-  - Secure credential association with monitored nodes
-
-- **User Interface**
-  - Clean, responsive GUI built with egui
-  - Real-time status updates
-  - Historical monitoring data visualization
-  - System tray integration for background monitoring
 
 - **Data Management**
   - SQLite database for persistent storage
   - Import/Export functionality (JSON, CSV)
   - Automatic data migration between versions
   - Configurable monitoring intervals
+  - Historical monitoring data with status change tracking
 
 - **Cross-Platform Support**
   - Native binaries for Windows, macOS, and Linux
   - Consistent experience across platforms
-  - Platform-specific optimizations
 
 ## Installation
 
@@ -44,10 +38,11 @@ Download the latest release for your platform from the [Releases page](https://g
 
 ### Build from Source
 
-Prerequisites:
+**Prerequisites:**
 - Rust 1.70+ (latest stable recommended)
-- Platform-specific dependencies (see below)
+- Linux only: `libgtk-3-dev` and `libssl-dev`
 
+**Quick start:**
 ```bash
 git clone https://github.com/casey-mccarthy/net-monitor.git
 cd net-monitor
@@ -55,53 +50,96 @@ cargo build --release
 ./target/release/net-monitor
 ```
 
-#### Platform-Specific Dependencies
-
-**Linux:**
-```bash
-sudo apt-get install libgtk-3-dev libssl-dev
-```
-
-**macOS:**
-No additional dependencies required.
-
-**Windows:**
-No additional dependencies required.
+For detailed build commands and development workflows, see [CLAUDE.md](CLAUDE.md).
 
 ## Usage
 
-### Getting Started
+### Choosing an Interface Mode
 
-1. **Launch the application** - Double-click the executable or run from terminal
-2. **Add a node to monitor**:
-   - Click "Add Node" 
-   - Enter node details (name, address/URL)
-   - Select connection type (HTTP, Ping, or SSH)
-   - Configure credentials if needed (for SSH)
-3. **Start monitoring**:
-   - Click "Check Now" for single check
-   - Click "Start Monitoring" for continuous monitoring
-   - View real-time status in the main window
+The application supports three binaries:
+
+```bash
+# Main binary - choose mode interactively or via CLI
+net-monitor                    # Default mode or prompt
+net-monitor --mode gui         # Launch in GUI mode
+net-monitor --mode tui         # Launch in TUI mode
+net-monitor --mode gui --save-default  # Set GUI as default
+
+# Dedicated binaries
+net-monitor-gui               # GUI only
+net-monitor-tui               # TUI only
+```
+
+### Basic Usage
+
+**GUI Mode:**
+1. Launch the application
+2. Click "Add Node" to create a new monitor
+3. Enter name, address/URL, and select connection type (HTTP, TCP, or Ping)
+4. Click "Check Now" for a single check or "Start Monitoring" for continuous monitoring
+5. View real-time status updates in the main window
+
+**TUI Mode:**
+1. Launch with `net-monitor --mode tui` or `net-monitor-tui`
+2. Use arrow keys and Enter to navigate
+3. Press 'a' to add a new node, 's' to start monitoring
+4. Press 'q' to quit
 
 ### Connection Types
 
-- **HTTP/HTTPS**: Monitor web endpoints, APIs, and services
-- **Ping (ICMP)**: Check network host availability
-- **SSH**: Test SSH server connectivity and authentication
+- **HTTP/HTTPS**: Monitor web endpoints, APIs, and services (e.g., `https://example.com`)
+- **TCP**: Check TCP port connectivity (e.g., `192.168.1.100:3306` for MySQL)
+- **Ping (ICMP)**: Check network host availability (e.g., `192.168.1.1`)
 
 ### Import/Export
 
-**Supported formats:**
-- JSON: Full configuration with all settings
-- CSV: Simplified format for bulk imports
+Import and export your monitoring configuration as JSON files. Available in both GUI (File menu) and TUI modes.
 
-**CSV Format:**
-```csv
-name,address,type
-Web Server,https://example.com,http
-Database,192.168.1.100,ping
-SSH Server,10.0.0.5,ssh
+**Format:**
+```json
+[
+  {
+    "name": "Google",
+    "monitoring_interval": 10,
+    "detail": {
+      "type": "Http",
+      "url": "https://www.google.com",
+      "expected_status": 200
+    },
+    "credential_id": null
+  },
+  {
+    "name": "MySQL Server",
+    "monitoring_interval": 30,
+    "detail": {
+      "type": "Tcp",
+      "host": "192.168.1.100",
+      "port": 3306,
+      "timeout": 5
+    },
+    "credential_id": null
+  },
+  {
+    "name": "Gateway",
+    "monitoring_interval": 5,
+    "detail": {
+      "type": "Ping",
+      "host": "192.168.1.1",
+      "count": 3,
+      "timeout": 5
+    },
+    "credential_id": null
+  }
+]
 ```
+
+**Usage:**
+- **GUI Mode**: Use File menu → Import/Export Nodes
+- **TUI Mode**: Press 'i' to import or 'e' to export, then enter file path
+- Files must use `.json` extension
+- Export creates pretty-printed JSON for easy editing
+
+See [sample_nodes.json](sample_nodes.json) for more examples.
 
 ### Data Storage
 
@@ -110,35 +148,12 @@ Application data is stored locally:
 - **macOS**: `~/Library/Application Support/net-monitor/`
 - **Linux**: `~/.local/share/net-monitor/`
 
-## Architecture
-
-Built with modern Rust practices:
-- **egui/eframe**: Native GUI framework
-- **tokio**: Async runtime for concurrent monitoring
-- **rusqlite**: Embedded database with migrations
-- **reqwest**: HTTP/HTTPS client
-- **ssh2**: SSH protocol support
-- **ring**: Cryptographic operations for credential encryption
-
 ## Development
 
-### Project Structure
-
-```
-src/
-├── main.rs          # Application entry point
-├── gui.rs           # User interface implementation
-├── models.rs        # Data models and types
-├── database.rs      # Database operations and migrations
-├── monitor.rs       # Core monitoring logic
-├── connection.rs    # Connection strategies (HTTP, Ping, SSH)
-└── credentials.rs   # Secure credential management
-```
-
-### Building and Testing
+### Quick Start
 
 ```bash
-# Development build with debug symbols
+# Development build
 cargo build
 
 # Run tests
@@ -147,74 +162,35 @@ cargo test
 # Run with debug logging
 RUST_LOG=debug cargo run
 
-# Production build with optimizations
+# Production build
 cargo build --release
 ```
 
+For comprehensive development workflows, build commands, and testing guidelines, see [CLAUDE.md](CLAUDE.md).
+
 ## Contributing
 
-Please see [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow and guidelines.
+We welcome contributions! Here's how to get started:
 
-### Claude Commands
+1. **Report bugs**: Use [GitHub Issues](https://github.com/casey-mccarthy/net-monitor/issues) with our bug report template
+2. **Suggest features**: Open an issue with the feature request template
+3. **Submit code**: Fork the repository, create a feature branch, and submit a pull request
 
-This project includes custom Claude Code commands to streamline development workflows:
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines on:
+- Development workflow and branch naming
+- Commit message conventions
+- Code style and testing requirements
+- Pull request process
 
-#### Core Workflow Commands
+For contributors using Claude Code, see [CLAUDE.md](CLAUDE.md) for automated workflow commands.
 
-- **`/quick-pr`** - Complete PR workflow
-  - Creates feature branch
-  - Guides through commits
-  - Runs pre-push quality checks (format, lint, tests)
-  - Rebases on main
-  - Creates pull request with changelog
+## Support
 
-- **`/pre-commit-checks`** - Run all quality checks
-  - Check only (default): Reports issues without changes
-  - `--fix`: Auto-fixes formatting and lint issues
-  - `--fix-commit`: Fixes and creates conventional commit
-  - Includes: format, build, clippy, tests, security audit
-
-#### Standalone Utility Commands
-
-- **`/create-feature-branch`** - Create and switch to feature branch
-- **`/commit-feature`** - Create conventional commit
-- **`/sync-main`** - Sync feature branch with main (rebase)
-- **`/release`** - Trigger release with automated versioning
-
-#### Quick Reference
-
-```bash
-# Start working on a new feature (all-in-one)
-/quick-pr feature-name
-
-# Just run quality checks before committing
-/pre-commit-checks
-
-# Run checks and auto-fix issues
-/pre-commit-checks --fix
-
-# Run checks, fix, and commit
-/pre-commit-checks --fix-commit
-
-# Create a feature branch only
-/create-feature-branch
-
-# Sync your branch with latest main
-/sync-main
-
-# Create a conventional commit
-/commit-feature
-```
-
-See [CLAUDE.md](CLAUDE.md) for detailed workflow documentation.
+- **Bug Reports**: Use our [bug report template](https://github.com/casey-mccarthy/net-monitor/issues/new?template=bug_report.yml)
+- **Feature Requests**: Use our [feature request template](https://github.com/casey-mccarthy/net-monitor/issues/new?template=feature_request.yml)
+- **Releases**: [GitHub Releases](https://github.com/casey-mccarthy/net-monitor/releases)
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
-
-## Support
-
-- **Issues**: [GitHub Issues](https://github.com/casey-mccarthy/net-monitor/issues)
-- **Documentation**: See `.claude/` folder for detailed documentation
-- **Releases**: [GitHub Releases](https://github.com/casey-mccarthy/net-monitor/releases)
 
