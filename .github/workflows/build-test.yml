@@ -2,6 +2,7 @@ name: Build Test
 
 permissions:
   contents: read
+  actions: write
 
 on:
   workflow_dispatch:
@@ -17,10 +18,7 @@ on:
           - x86_64-unknown-linux-gnu
           - x86_64-apple-darwin
           - aarch64-apple-darwin
-
-permissions:
-  contents: read
-  actions: write
+  
 
 jobs:
   build-single:
