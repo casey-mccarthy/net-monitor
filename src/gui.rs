@@ -428,58 +428,13 @@ impl NetworkMonitorApp {
                             })
                             .unwrap_or_else(|| "Never".to_string());
 
+                        // Display Last Check with status-colored text during flash
                         if flash_intensity > 0.0 {
-                            // Create a glowing effect by rendering the text multiple times with different alphas
-                            let response =
-                                ui.allocate_response(ui.available_size(), egui::Sense::hover());
-                            let text_pos = response.rect.min;
-                            let painter = ui.painter();
-                            let font_id = egui::TextStyle::Body.resolve(ui.style());
-
-                            // Draw multiple layers for glow effect
-                            let glow_layers = [
-                                (3.0, 0.02), // Outermost, most faded
-                                (2.0, 0.04),
-                                (1.0, 0.06),
-                                (0.5, 0.08),
-                            ];
-
-                            for (offset, alpha_multiplier) in glow_layers.iter() {
-                                let glow_alpha = (flash_intensity * alpha_multiplier * 255.0) as u8;
-                                let glow_color =
-                                    Color32::from_rgba_unmultiplied(255, 255, 255, glow_alpha);
-
-                                // Draw glow in multiple directions for radial effect
-                                let offsets = [
-                                    egui::Vec2::new(*offset, 0.0),
-                                    egui::Vec2::new(-*offset, 0.0),
-                                    egui::Vec2::new(0.0, *offset),
-                                    egui::Vec2::new(0.0, -*offset),
-                                    egui::Vec2::new(*offset * 0.7, *offset * 0.7),
-                                    egui::Vec2::new(-*offset * 0.7, *offset * 0.7),
-                                    egui::Vec2::new(*offset * 0.7, -*offset * 0.7),
-                                    egui::Vec2::new(-*offset * 0.7, -*offset * 0.7),
-                                ];
-
-                                for offset_vec in offsets.iter() {
-                                    painter.text(
-                                        text_pos + *offset_vec,
-                                        egui::Align2::LEFT_TOP,
-                                        &last_check_str,
-                                        font_id.clone(),
-                                        glow_color,
-                                    );
-                                }
-                            }
-
-                            // Draw the main text on top
-                            painter.text(
-                                text_pos,
-                                egui::Align2::LEFT_TOP,
-                                &last_check_str,
-                                font_id,
-                                ui.visuals().text_color(),
-                            );
+                            let text_color = match node.status {
+                                NodeStatus::Online => Color32::GREEN,
+                                NodeStatus::Offline => Color32::RED,
+                            };
+                            ui.label(RichText::new(last_check_str).color(text_color).strong());
                         } else {
                             ui.label(last_check_str);
                         }
