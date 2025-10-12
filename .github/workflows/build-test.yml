@@ -15,6 +15,10 @@ on:
           - x86_64-apple-darwin
           - aarch64-apple-darwin
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   build-single:
     if: ${{ github.event.inputs.target != 'all' }}
