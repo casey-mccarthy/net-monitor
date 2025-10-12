@@ -698,13 +698,18 @@ impl NetworkMonitorTui {
             Line::from(vec![
                 Span::raw("Monitor Type: "),
                 Span::styled(
-                    form.monitor_type.to_string(),
+                    format!("{} ", form.monitor_type),
                     if form.current_field == 2 {
                         Style::default().bg(Color::DarkGray)
                     } else {
                         Style::default()
                     },
                 ),
+                if form.current_field == 2 {
+                    Span::styled("[←/→ or Space to change]", Style::default().fg(Color::Gray))
+                } else {
+                    Span::raw("")
+                },
             ]),
             Line::from(vec![
                 Span::raw("Credential: "),
@@ -824,7 +829,14 @@ impl NetworkMonitorTui {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(" Next field | "),
+            Span::raw(" Next | "),
+            Span::styled(
+                "[←/→/Space]",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" Change | "),
             Span::styled(
                 "[Enter]",
                 Style::default()
@@ -1250,6 +1262,12 @@ impl NetworkMonitorTui {
                     self.node_form.current_field -= 1;
                 }
             }
+            KeyCode::Left | KeyCode::Right => {
+                // Handle arrow keys for Monitor Type field
+                if self.node_form.current_field == 2 {
+                    self.cycle_monitor_type(key == KeyCode::Right);
+                }
+            }
             KeyCode::Char(c) => {
                 self.add_char_to_form_field(c);
             }
@@ -1358,19 +1376,31 @@ impl NetworkMonitorTui {
 
     // Helper methods
 
+    fn cycle_monitor_type(&mut self, forward: bool) {
+        self.node_form.monitor_type = if forward {
+            match self.node_form.monitor_type {
+                MonitorTypeForm::Http => MonitorTypeForm::Ping,
+                MonitorTypeForm::Ping => MonitorTypeForm::Tcp,
+                MonitorTypeForm::Tcp => MonitorTypeForm::Http,
+            }
+        } else {
+            match self.node_form.monitor_type {
+                MonitorTypeForm::Http => MonitorTypeForm::Tcp,
+                MonitorTypeForm::Tcp => MonitorTypeForm::Ping,
+                MonitorTypeForm::Ping => MonitorTypeForm::Http,
+            }
+        };
+    }
+
     fn add_char_to_form_field(&mut self, c: char) {
         let field = self.node_form.current_field;
         match field {
             0 => self.node_form.name.push(c),
             1 => self.node_form.monitoring_interval.push(c),
             2 => {
-                // Cycle through monitor types
-                if c == ' ' || c == '\t' {
-                    self.node_form.monitor_type = match self.node_form.monitor_type {
-                        MonitorTypeForm::Http => MonitorTypeForm::Ping,
-                        MonitorTypeForm::Ping => MonitorTypeForm::Tcp,
-                        MonitorTypeForm::Tcp => MonitorTypeForm::Http,
-                    };
+                // Cycle through monitor types with Space only
+                if c == ' ' {
+                    self.cycle_monitor_type(true);
                 }
             }
             3 => {} // Credential selection - would need dropdown
