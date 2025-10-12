@@ -147,6 +147,7 @@ impl StatusChange {
     }
 
     /// Check if this is a transition to/from an error state
+    #[allow(dead_code)] // Future feature: status change analysis
     pub fn is_degradation(&self) -> bool {
         matches!(
             (self.from_status, self.to_status),
@@ -155,6 +156,7 @@ impl StatusChange {
     }
 
     /// Check if this is a recovery to a healthy state
+    #[allow(dead_code)] // Future feature: status change analysis
     pub fn is_recovery(&self) -> bool {
         matches!(
             (self.from_status, self.to_status),
@@ -163,6 +165,7 @@ impl StatusChange {
     }
 
     /// Get a human-readable description of the status change
+    #[allow(dead_code)] // Future feature: status change descriptions
     pub fn description(&self) -> String {
         format!("{} → {}", self.from_status, self.to_status)
     }
