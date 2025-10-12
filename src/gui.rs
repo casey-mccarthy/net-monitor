@@ -986,11 +986,21 @@ impl NetworkMonitorApp {
 
         let thread = thread::spawn(move || {
             let mut last_check_times: HashMap<i64, Instant> = HashMap::new();
-            // Initialize previous_statuses with all nodes starting as Offline
-            // This ensures first successful check will be Offline → Online and get recorded
+            // Initialize previous_statuses with actual last known status from database
+            // This prevents recording duplicate entries when the app restarts
             let mut previous_statuses: HashMap<i64, NodeStatus> = initial_nodes
                 .iter()
-                .filter_map(|n| n.id.map(|id| (id, NodeStatus::Offline)))
+                .filter_map(|n| {
+                    n.id.and_then(|id| {
+                        // Try to get the last monitoring result from database
+                        db.get_latest_monitoring_result(id)
+                            .ok()
+                            .flatten()
+                            .map(|result| (id, result.status))
+                            // If no previous result, use the node's current status
+                            .or(Some((id, n.status)))
+                    })
+                })
                 .collect();
             let mut last_status_change_times: HashMap<i64, chrono::DateTime<Utc>> = HashMap::new();
             let mut current_nodes = initial_nodes.clone();
@@ -1003,9 +1013,15 @@ impl NetworkMonitorApp {
                         NodeConfigUpdate::Add(node) => {
                             info!("Adding new node to monitoring: {}", node.name);
                             if !current_nodes.iter().any(|n| n.id == node.id) {
-                                // Initialize new node's previous status as Offline
+                                // Initialize new node's previous status from database or use current status
                                 if let Some(node_id) = node.id {
-                                    previous_statuses.insert(node_id, NodeStatus::Offline);
+                                    let status = db
+                                        .get_latest_monitoring_result(node_id)
+                                        .ok()
+                                        .flatten()
+                                        .map(|result| result.status)
+                                        .unwrap_or(node.status);
+                                    previous_statuses.insert(node_id, status);
                                 }
                                 current_nodes.push(node);
                             }
@@ -1142,8 +1158,20 @@ impl NetworkMonitorApp {
                                 if let Err(e) = db.update_node(node) {
                                     error!("Failed to update node status: {}", e);
                                 }
-                                if let Err(e) = db.add_monitoring_result(&check_result) {
-                                    error!("Failed to save monitoring result: {}", e);
+
+                                // Only record monitoring result if status changed
+                                // This prevents spam when app restarts with unchanged status
+                                if let Some(prev_status) = previous_status {
+                                    if prev_status != new_status {
+                                        if let Err(e) = db.add_monitoring_result(&check_result) {
+                                            error!("Failed to save monitoring result: {}", e);
+                                        }
+                                    }
+                                } else {
+                                    // First check ever for this node, record it
+                                    if let Err(e) = db.add_monitoring_result(&check_result) {
+                                        error!("Failed to save monitoring result: {}", e);
+                                    }
                                 }
 
                                 if update_tx.send(node.clone()).is_err() {
