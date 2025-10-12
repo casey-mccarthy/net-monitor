@@ -75,7 +75,7 @@ I'll analyze the current branch and PR to ensure they follow conventional commit
 **Important**: The official Conventional Commits specification only defines `feat` and `fix`. All other types are conventions from Angular and are widely adopted but not part of the core spec.
 
 ### Breaking Changes:
-Add `!` after type or `BREAKING CHANGE:` in footer for MAJOR version bump:
+Add an exclamation mark (!) after the type, or add `BREAKING CHANGE:` in the footer for MAJOR version bump:
 ```
 feat!: change API authentication method
 
