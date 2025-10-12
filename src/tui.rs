@@ -950,14 +950,62 @@ impl NetworkMonitorTui {
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .constraints([
+                Constraint::Length(6), // Uptime statistics section
+                Constraint::Min(0),    // Status change history
+                Constraint::Length(1), // Help text
+            ])
             .split(inner);
 
+        // Uptime Statistics Section
+        if let Some(node_id) = self.viewing_history_node_id {
+            let now = Utc::now();
+            let periods = vec![
+                ("Last 24 Hours", now - chrono::Duration::hours(24)),
+                ("Last 7 Days", now - chrono::Duration::days(7)),
+                ("Last 30 Days", now - chrono::Duration::days(30)),
+            ];
+
+            let mut uptime_lines = vec![Line::from(vec![Span::styled(
+                "Uptime Statistics",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )])];
+
+            for (label, start_time) in periods {
+                if let Ok(uptime_pct) = self
+                    .database
+                    .calculate_uptime_percentage(node_id, start_time, now)
+                {
+                    let color = if uptime_pct >= 99.0 {
+                        Color::Green
+                    } else if uptime_pct >= 95.0 {
+                        Color::Yellow
+                    } else {
+                        Color::Red
+                    };
+
+                    uptime_lines.push(Line::from(vec![
+                        Span::raw(format!("{}: ", label)),
+                        Span::styled(
+                            format!("{:.2}%", uptime_pct),
+                            Style::default().fg(color).add_modifier(Modifier::BOLD),
+                        ),
+                    ]));
+                }
+            }
+
+            let uptime_paragraph = Paragraph::new(uptime_lines).wrap(Wrap { trim: true });
+            f.render_widget(uptime_paragraph, chunks[0]);
+        }
+
+        // Status Change History Section
         if self.status_changes.is_empty() {
             let msg = Paragraph::new("No status changes recorded.")
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Gray));
-            f.render_widget(msg, chunks[0]);
+            f.render_widget(msg, chunks[1]);
         } else {
             let header = Row::new(vec!["Timestamp", "From", "To", "Duration"])
                 .style(
@@ -1002,14 +1050,14 @@ impl NetworkMonitorTui {
             )
             .header(header);
 
-            f.render_widget(table, chunks[0]);
+            f.render_widget(table, chunks[1]);
         }
 
         let help = Paragraph::new(Line::from(vec![
             Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
             Span::raw(" Close"),
         ]));
-        f.render_widget(help, chunks[1]);
+        f.render_widget(help, chunks[2]);
     }
 
     fn render_help_view(&mut self, f: &mut Frame) {
