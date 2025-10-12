@@ -273,6 +273,7 @@ pub struct NetworkMonitorTui {
     // Delete confirmation
     delete_node_index: Option<usize>,
     delete_credential_index: Option<usize>,
+    return_to_credentials_after_delete: bool,
     // Import/Export
     import_export_path: String,
     // Auto-hide selection
@@ -318,6 +319,7 @@ impl NetworkMonitorTui {
             status_changes: Vec::new(),
             delete_node_index: None,
             delete_credential_index: None,
+            return_to_credentials_after_delete: false,
             import_export_path: String::new(),
             last_input_time: Some(Instant::now()),
         };
@@ -441,7 +443,13 @@ impl NetworkMonitorTui {
                             }
                             AppState::ConfirmDelete => {
                                 if self.handle_confirm_delete_input(key.code) {
-                                    self.state = AppState::Main;
+                                    // Return to credential manager if we came from there
+                                    if self.return_to_credentials_after_delete {
+                                        self.state = AppState::ManageCredentials;
+                                        self.return_to_credentials_after_delete = false;
+                                    } else {
+                                        self.state = AppState::Main;
+                                    }
                                 }
                             }
                             AppState::ImportNodes | AppState::ExportNodes => {
@@ -1572,6 +1580,7 @@ impl NetworkMonitorTui {
             KeyCode::Char('d') | KeyCode::Char('D') => {
                 if let Some(selected) = self.list_state.selected() {
                     self.delete_credential_index = Some(selected);
+                    self.return_to_credentials_after_delete = true;
                     self.state = AppState::ConfirmDelete;
                 }
             }
