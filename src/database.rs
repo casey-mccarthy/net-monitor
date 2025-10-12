@@ -377,7 +377,7 @@ impl Database {
         Ok(conn.last_insert_rowid())
     }
 
-    /// Retrieves status changes for a node, ordered chronologically (oldest to newest)
+    /// Retrieves status changes for a node, ordered by most recent first
     pub fn get_status_changes(
         &self,
         node_id: i64,
@@ -389,7 +389,7 @@ impl Database {
                 "SELECT id, node_id, from_status, to_status, changed_at, duration_ms
                  FROM status_changes
                  WHERE node_id = ?
-                 ORDER BY changed_at ASC
+                 ORDER BY changed_at DESC
                  LIMIT {}",
                 limit
             )
@@ -397,7 +397,7 @@ impl Database {
             "SELECT id, node_id, from_status, to_status, changed_at, duration_ms
              FROM status_changes
              WHERE node_id = ?
-             ORDER BY changed_at ASC"
+             ORDER BY changed_at DESC"
                 .to_string()
         };
 
