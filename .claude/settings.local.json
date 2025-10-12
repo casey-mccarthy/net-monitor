@@ -4,7 +4,6 @@
     "allow": [
       "Bash(kill:*)",
       "Bash(pkill:*)",
-      
       "Bash(cargo run:*)",
       "Bash(cargo check:*)",
       "Bash(cargo --version)",
@@ -17,10 +16,8 @@
       "Bash(RUSTFLAGS=\"-A dead_code\" cargo test:*)",
       "Bash(RUSTFLAGS=\"-A dead_code\" cargo build:*)",
       "Bash(set RUSTFLAGS=-A dead_code)",
-      
       "Bash(rustc:*)",
       "Bash(rustup target:*)",
-      
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git stash:*)",
@@ -32,7 +29,6 @@
       "Bash(git rebase:*)",
       "Bash(git push:*)",
       "Bash(git status)",
-      
       "Bash(gh pr list:*)",
       "Bash(gh pr create:*)",
       "Bash(gh pr edit:*)",
@@ -42,10 +38,12 @@
       "Bash(gh api:*)",
       "Bash(gh issue list:*)",
       "Bash(gh issue view:*)",
-      
       "Bash(find:*)",
       "Bash(cat:*)",
-      "Bash(wc -l:*)"
+      "Bash(wc -l:*)",
+      "Bash(__NEW_LINE__ my-ssh-key)",
+      "Bash(__NEW_LINE__ This action cannot be undone.)",
+      "Bash(__NEW_LINE__ Press Y to confirm or N/Esc to cancel\"\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
     ],
     "deny": [],
     "ask": []
