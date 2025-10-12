@@ -407,6 +407,7 @@ impl Database {
     ///
     /// Returns None if there are no status changes before the given time
     /// (in which case the node should be assumed to be in its default/current state)
+    #[allow(dead_code)] // Future feature: historical status queries
     pub fn get_status_at_time(
         &self,
         node_id: i64,

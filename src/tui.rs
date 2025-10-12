@@ -6,7 +6,9 @@ use crate::monitor::check_node;
 use anyhow::Result;
 use chrono::Utc;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -160,6 +162,7 @@ impl NodeForm {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+#[allow(dead_code)] // Future feature: credential form variants
 enum CredentialTypeForm {
     Default,
     Password,
@@ -179,6 +182,7 @@ impl std::fmt::Display for CredentialTypeForm {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)] // Future feature: credential form fields
 struct CredentialForm {
     name: String,
     description: String,
@@ -370,53 +374,58 @@ impl NetworkMonitorTui {
 
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
-                    match self.state {
-                        AppState::Main => {
-                            if self.handle_main_input(key.code, key.modifiers)? {
-                                break;
+                    // On Windows, crossterm reports both KeyPress and KeyRelease events.
+                    // We only want to handle KeyPress to avoid double-processing each keystroke.
+                    // On macOS/Linux, only KeyPress events are generated.
+                    if key.kind == KeyEventKind::Press {
+                        match self.state {
+                            AppState::Main => {
+                                if self.handle_main_input(key.code, key.modifiers)? {
+                                    break;
+                                }
                             }
-                        }
-                        AppState::AddNode => {
-                            if self.handle_node_form_input(key.code, key.modifiers) {
-                                self.state = AppState::Main;
+                            AppState::AddNode => {
+                                if self.handle_node_form_input(key.code, key.modifiers) {
+                                    self.state = AppState::Main;
+                                }
                             }
-                        }
-                        AppState::EditNode => {
-                            if self.handle_node_form_input(key.code, key.modifiers) {
-                                self.state = AppState::Main;
-                                self.editing_node_id = None;
+                            AppState::EditNode => {
+                                if self.handle_node_form_input(key.code, key.modifiers) {
+                                    self.state = AppState::Main;
+                                    self.editing_node_id = None;
+                                }
                             }
-                        }
-                        AppState::ManageCredentials => {
-                            if self.handle_credentials_input(key.code) {
-                                self.state = AppState::Main;
+                            AppState::ManageCredentials => {
+                                if self.handle_credentials_input(key.code) {
+                                    self.state = AppState::Main;
+                                }
                             }
-                        }
-                        AppState::AddCredential => {
-                            if self.handle_credential_form_input(key.code) {
-                                self.state = AppState::ManageCredentials;
+                            AppState::AddCredential => {
+                                if self.handle_credential_form_input(key.code) {
+                                    self.state = AppState::ManageCredentials;
+                                }
                             }
-                        }
-                        AppState::ViewHistory => {
-                            if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
-                                self.state = AppState::Main;
-                                self.viewing_history_node_id = None;
-                                self.status_changes.clear();
+                            AppState::ViewHistory => {
+                                if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+                                    self.state = AppState::Main;
+                                    self.viewing_history_node_id = None;
+                                    self.status_changes.clear();
+                                }
                             }
-                        }
-                        AppState::Help => {
-                            if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
-                                self.state = AppState::Main;
+                            AppState::Help => {
+                                if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+                                    self.state = AppState::Main;
+                                }
                             }
-                        }
-                        AppState::ConfirmDelete => {
-                            if self.handle_confirm_delete_input(key.code) {
-                                self.state = AppState::Main;
+                            AppState::ConfirmDelete => {
+                                if self.handle_confirm_delete_input(key.code) {
+                                    self.state = AppState::Main;
+                                }
                             }
-                        }
-                        AppState::ImportNodes | AppState::ExportNodes => {
-                            if self.handle_import_export_input(key.code) {
-                                self.state = AppState::Main;
+                            AppState::ImportNodes | AppState::ExportNodes => {
+                                if self.handle_import_export_input(key.code) {
+                                    self.state = AppState::Main;
+                                }
                             }
                         }
                     }
