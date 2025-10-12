@@ -570,35 +570,36 @@ impl NetworkMonitorTui {
                     last_check
                 };
 
-                // Row background - highlight recently checked nodes with pulsing effect
-                let row_bg = if flash_intensity > 0.0 {
-                    Color::DarkGray
+                // Calculate text color for Last Check cell based on status and flash intensity
+                let last_check_color = if flash_intensity > 0.0 {
+                    // Use status color for text during flash
+                    match node.status {
+                        NodeStatus::Online => Color::Green,
+                        NodeStatus::Offline => Color::Red,
+                    }
                 } else {
-                    Color::Reset
+                    Color::White
                 };
 
                 // Create cells with individual styling
                 let cells = vec![
-                    Cell::from(node.name.clone())
-                        .style(Style::default().fg(Color::White).bg(row_bg)),
+                    Cell::from(node.name.clone()).style(Style::default().fg(Color::White)),
                     Cell::from(node.detail.get_connection_target())
-                        .style(Style::default().fg(Color::Cyan).bg(row_bg)),
-                    Cell::from(node.detail.to_string())
-                        .style(Style::default().fg(Color::Yellow).bg(row_bg)),
+                        .style(Style::default().fg(Color::Cyan)),
+                    Cell::from(node.detail.to_string()).style(Style::default().fg(Color::Yellow)),
                     Cell::from(status_str).style(
                         Style::default()
                             .fg(status_color)
-                            .bg(row_bg)
                             .add_modifier(Modifier::BOLD),
                     ),
                     Cell::from(last_check_display).style(
-                        Style::default()
-                            .fg(if flash_intensity > 0.0 {
-                                Color::LightYellow
+                        Style::default().fg(last_check_color).add_modifier(
+                            if flash_intensity > 0.0 {
+                                Modifier::BOLD
                             } else {
-                                Color::White
-                            })
-                            .bg(row_bg),
+                                Modifier::empty()
+                            },
+                        ),
                     ),
                 ];
 
