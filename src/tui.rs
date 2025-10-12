@@ -278,6 +278,9 @@ pub struct NetworkMonitorTui {
     import_export_path: String,
     // Auto-hide selection
     last_input_time: Option<Instant>,
+    // Cursor blink state for empty fields
+    cursor_blink_state: bool,
+    last_blink_time: Instant,
 }
 
 impl NetworkMonitorTui {
@@ -322,6 +325,8 @@ impl NetworkMonitorTui {
             return_to_credentials_after_delete: false,
             import_export_path: String::new(),
             last_input_time: Some(Instant::now()),
+            cursor_blink_state: true,
+            last_blink_time: Instant::now(),
         };
 
         // Select first node if any exist
@@ -394,6 +399,12 @@ impl NetworkMonitorTui {
                 if now.duration_since(last_input).as_secs() >= 5 {
                     self.last_input_time = None;
                 }
+            }
+
+            // Toggle cursor blink state every 530ms (standard terminal blink rate)
+            if now.duration_since(self.last_blink_time).as_millis() >= 530 {
+                self.cursor_blink_state = !self.cursor_blink_state;
+                self.last_blink_time = now;
             }
 
             if event::poll(Duration::from_millis(100))? {
@@ -719,11 +730,16 @@ impl NetworkMonitorTui {
         f.render_widget(block, area);
 
         let form = &self.node_form;
+        let cursor = if self.cursor_blink_state { "│" } else { "" };
         let mut lines = vec![
             Line::from(vec![
                 Span::raw("Name: "),
                 Span::styled(
-                    &form.name,
+                    if form.name.is_empty() && form.current_field == 0 {
+                        cursor
+                    } else {
+                        &form.name
+                    },
                     if form.current_field == 0 {
                         Style::default().bg(Color::DarkGray)
                     } else {
@@ -734,7 +750,11 @@ impl NetworkMonitorTui {
             Line::from(vec![
                 Span::raw("Monitoring Interval (s): "),
                 Span::styled(
-                    &form.monitoring_interval,
+                    if form.monitoring_interval.is_empty() && form.current_field == 1 {
+                        cursor
+                    } else {
+                        &form.monitoring_interval
+                    },
                     if form.current_field == 1 {
                         Style::default().bg(Color::DarkGray)
                     } else {
@@ -776,7 +796,11 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("URL: "),
                     Span::styled(
-                        &form.http_url,
+                        if form.http_url.is_empty() && form.current_field == 4 {
+                            cursor
+                        } else {
+                            &form.http_url
+                        },
                         if form.current_field == 4 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -787,7 +811,11 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Expected Status: "),
                     Span::styled(
-                        &form.http_expected_status,
+                        if form.http_expected_status.is_empty() && form.current_field == 5 {
+                            cursor
+                        } else {
+                            &form.http_expected_status
+                        },
                         if form.current_field == 5 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -800,7 +828,11 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Host: "),
                     Span::styled(
-                        &form.ping_host,
+                        if form.ping_host.is_empty() && form.current_field == 4 {
+                            cursor
+                        } else {
+                            &form.ping_host
+                        },
                         if form.current_field == 4 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -811,7 +843,11 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Count: "),
                     Span::styled(
-                        &form.ping_count,
+                        if form.ping_count.is_empty() && form.current_field == 5 {
+                            cursor
+                        } else {
+                            &form.ping_count
+                        },
                         if form.current_field == 5 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -822,7 +858,11 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Timeout (s): "),
                     Span::styled(
-                        &form.ping_timeout,
+                        if form.ping_timeout.is_empty() && form.current_field == 6 {
+                            cursor
+                        } else {
+                            &form.ping_timeout
+                        },
                         if form.current_field == 6 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -835,7 +875,11 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Host: "),
                     Span::styled(
-                        &form.tcp_host,
+                        if form.tcp_host.is_empty() && form.current_field == 4 {
+                            cursor
+                        } else {
+                            &form.tcp_host
+                        },
                         if form.current_field == 4 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -846,7 +890,11 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Port: "),
                     Span::styled(
-                        &form.tcp_port,
+                        if form.tcp_port.is_empty() && form.current_field == 5 {
+                            cursor
+                        } else {
+                            &form.tcp_port
+                        },
                         if form.current_field == 5 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -857,7 +905,11 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Timeout (s): "),
                     Span::styled(
-                        &form.tcp_timeout,
+                        if form.tcp_timeout.is_empty() && form.current_field == 6 {
+                            cursor
+                        } else {
+                            &form.tcp_timeout
+                        },
                         if form.current_field == 6 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -974,11 +1026,16 @@ impl NetworkMonitorTui {
         f.render_widget(block, area);
 
         let form = &self.credential_form;
+        let cursor = if self.cursor_blink_state { "│" } else { "" };
         let mut lines = vec![
             Line::from(vec![
                 Span::raw("Name: "),
                 Span::styled(
-                    &form.name,
+                    if form.name.is_empty() && form.current_field == 0 {
+                        cursor
+                    } else {
+                        &form.name
+                    },
                     if form.current_field == 0 {
                         Style::default().bg(Color::DarkGray)
                     } else {
@@ -989,7 +1046,11 @@ impl NetworkMonitorTui {
             Line::from(vec![
                 Span::raw("Description: "),
                 Span::styled(
-                    &form.description,
+                    if form.description.is_empty() && form.current_field == 1 {
+                        cursor
+                    } else {
+                        &form.description
+                    },
                     if form.current_field == 1 {
                         Style::default().bg(Color::DarkGray)
                     } else {
@@ -1027,7 +1088,11 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Username: "),
                     Span::styled(
-                        &form.username,
+                        if form.username.is_empty() && form.current_field == 3 {
+                            cursor
+                        } else {
+                            &form.username
+                        },
                         if form.current_field == 3 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -1035,10 +1100,15 @@ impl NetworkMonitorTui {
                         },
                     ),
                 ]));
+                let password_display = if form.password.is_empty() {
+                    cursor.to_string()
+                } else {
+                    "*".repeat(form.password.len())
+                };
                 lines.push(Line::from(vec![
                     Span::raw("Password: "),
                     Span::styled(
-                        "*".repeat(form.password.len()),
+                        password_display,
                         if form.current_field == 4 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -1051,7 +1121,11 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Username: "),
                     Span::styled(
-                        &form.username,
+                        if form.username.is_empty() && form.current_field == 3 {
+                            cursor
+                        } else {
+                            &form.username
+                        },
                         if form.current_field == 3 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -1062,7 +1136,11 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("SSH Key Path: "),
                     Span::styled(
-                        &form.ssh_key_path,
+                        if form.ssh_key_path.is_empty() && form.current_field == 4 {
+                            cursor
+                        } else {
+                            &form.ssh_key_path
+                        },
                         if form.current_field == 4 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -1070,10 +1148,15 @@ impl NetworkMonitorTui {
                         },
                     ),
                 ]));
+                let passphrase_display = if form.passphrase.is_empty() {
+                    cursor.to_string()
+                } else {
+                    "*".repeat(form.passphrase.len())
+                };
                 lines.push(Line::from(vec![
                     Span::raw("Passphrase (optional): "),
                     Span::styled(
-                        "*".repeat(form.passphrase.len()),
+                        passphrase_display,
                         if form.current_field == 5 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -1086,7 +1169,11 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Username: "),
                     Span::styled(
-                        &form.username,
+                        if form.username.is_empty() && form.current_field == 3 {
+                            cursor
+                        } else {
+                            &form.username
+                        },
                         if form.current_field == 3 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -1094,14 +1181,19 @@ impl NetworkMonitorTui {
                         },
                     ),
                 ]));
+                let key_data_display = if form.ssh_key_data.is_empty() {
+                    if form.current_field == 4 {
+                        cursor.to_string()
+                    } else {
+                        "<paste private key>".to_string()
+                    }
+                } else {
+                    "<key data entered>".to_string()
+                };
                 lines.push(Line::from(vec![
                     Span::raw("SSH Key Data: "),
                     Span::styled(
-                        if form.ssh_key_data.is_empty() {
-                            "<paste private key>"
-                        } else {
-                            "<key data entered>"
-                        },
+                        key_data_display,
                         if form.current_field == 4 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -1109,10 +1201,15 @@ impl NetworkMonitorTui {
                         },
                     ),
                 ]));
+                let passphrase_display = if form.passphrase.is_empty() {
+                    cursor.to_string()
+                } else {
+                    "*".repeat(form.passphrase.len())
+                };
                 lines.push(Line::from(vec![
                     Span::raw("Passphrase (optional): "),
                     Span::styled(
-                        "*".repeat(form.passphrase.len()),
+                        passphrase_display,
                         if form.current_field == 5 {
                             Style::default().bg(Color::DarkGray)
                         } else {
@@ -1457,10 +1554,15 @@ impl NetworkMonitorTui {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan));
 
+        let cursor = if self.cursor_blink_state { "│" } else { "" };
         let text = vec![
             Line::from("Enter file path:"),
             Line::from(Span::styled(
-                &self.import_export_path,
+                if self.import_export_path.is_empty() {
+                    cursor
+                } else {
+                    &self.import_export_path
+                },
                 Style::default().bg(Color::DarkGray),
             )),
             Line::from(""),
