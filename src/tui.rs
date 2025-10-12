@@ -1365,7 +1365,7 @@ impl NetworkMonitorTui {
     }
 
     fn render_confirm_delete(&mut self, f: &mut Frame) {
-        let area = centered_rect(40, 20, f.area());
+        let area = centered_rect(60, 25, f.area());
         f.render_widget(Clear, area);
 
         let block = Block::default()
@@ -1373,14 +1373,42 @@ impl NetworkMonitorTui {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Red));
 
+        // Determine what we're deleting and get its name
+        let (item_type, item_name) = if let Some(index) = self.delete_node_index {
+            let name = self.nodes.get(index)
+                .map(|n| n.name.as_str())
+                .unwrap_or("Unknown");
+            ("node", name)
+        } else if let Some(index) = self.delete_credential_index {
+            let name = self.credentials.get(index)
+                .map(|c| c.name.as_str())
+                .unwrap_or("Unknown");
+            ("credential", name)
+        } else {
+            ("item", "Unknown")
+        };
+
         let text = vec![
-            Line::from("Are you sure you want to delete this item?"),
+            Line::from(vec![
+                Span::raw("Are you sure you want to delete this "),
+                Span::styled(item_type, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::raw("?"),
+            ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled("[Y]", Style::default().fg(Color::Yellow)),
-                Span::raw("es / "),
-                Span::styled("[N]", Style::default().fg(Color::Yellow)),
-                Span::raw("o"),
+                Span::styled(item_name, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(""),
+            Line::from("This action cannot be undone."),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("Press "),
+                Span::styled("Y", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::raw(" to confirm or "),
+                Span::styled("N", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::raw("/"),
+                Span::styled("Esc", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::raw(" to cancel"),
             ]),
         ];
 
