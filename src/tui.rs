@@ -211,6 +211,18 @@ impl Default for CredentialForm {
     }
 }
 
+impl CredentialForm {
+    fn get_field_count(&self) -> usize {
+        // name, description, credential_type + type-specific fields
+        match self.credential_type {
+            CredentialTypeForm::Default => 3,  // name, description, type
+            CredentialTypeForm::Password => 5, // name, description, type, username, password
+            CredentialTypeForm::KeyFile => 6, // name, description, type, username, key_path, passphrase
+            CredentialTypeForm::KeyData => 6, // name, description, type, username, key_data, passphrase
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum AppState {
     Main,
@@ -941,9 +953,202 @@ impl NetworkMonitorTui {
         f.render_stateful_widget(list, chunks[1], &mut self.list_state);
     }
 
-    fn render_credential_form(&mut self, _f: &mut Frame) {
-        // Simplified - credential form rendering
-        // Full implementation would be similar to node form
+    fn render_credential_form(&mut self, f: &mut Frame) {
+        let area = centered_rect(70, 80, f.area());
+        f.render_widget(Clear, area);
+
+        let block = Block::default()
+            .title("Add Credential")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        let form = &self.credential_form;
+        let mut lines = vec![
+            Line::from(vec![
+                Span::raw("Name: "),
+                Span::styled(
+                    &form.name,
+                    if form.current_field == 0 {
+                        Style::default().bg(Color::DarkGray)
+                    } else {
+                        Style::default()
+                    },
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("Description: "),
+                Span::styled(
+                    &form.description,
+                    if form.current_field == 1 {
+                        Style::default().bg(Color::DarkGray)
+                    } else {
+                        Style::default()
+                    },
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("Credential Type: "),
+                Span::styled(
+                    format!("{} ", form.credential_type),
+                    if form.current_field == 2 {
+                        Style::default().bg(Color::DarkGray)
+                    } else {
+                        Style::default()
+                    },
+                ),
+                if form.current_field == 2 {
+                    Span::styled("[←/→ or Space to change]", Style::default().fg(Color::Gray))
+                } else {
+                    Span::raw("")
+                },
+            ]),
+        ];
+
+        match form.credential_type {
+            CredentialTypeForm::Default => {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Uses system default SSH configuration",
+                    Style::default().fg(Color::Gray),
+                )));
+            }
+            CredentialTypeForm::Password => {
+                lines.push(Line::from(vec![
+                    Span::raw("Username: "),
+                    Span::styled(
+                        &form.username,
+                        if form.current_field == 3 {
+                            Style::default().bg(Color::DarkGray)
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::raw("Password: "),
+                    Span::styled(
+                        "*".repeat(form.password.len()),
+                        if form.current_field == 4 {
+                            Style::default().bg(Color::DarkGray)
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                ]));
+            }
+            CredentialTypeForm::KeyFile => {
+                lines.push(Line::from(vec![
+                    Span::raw("Username: "),
+                    Span::styled(
+                        &form.username,
+                        if form.current_field == 3 {
+                            Style::default().bg(Color::DarkGray)
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::raw("SSH Key Path: "),
+                    Span::styled(
+                        &form.ssh_key_path,
+                        if form.current_field == 4 {
+                            Style::default().bg(Color::DarkGray)
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::raw("Passphrase (optional): "),
+                    Span::styled(
+                        "*".repeat(form.passphrase.len()),
+                        if form.current_field == 5 {
+                            Style::default().bg(Color::DarkGray)
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                ]));
+            }
+            CredentialTypeForm::KeyData => {
+                lines.push(Line::from(vec![
+                    Span::raw("Username: "),
+                    Span::styled(
+                        &form.username,
+                        if form.current_field == 3 {
+                            Style::default().bg(Color::DarkGray)
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::raw("SSH Key Data: "),
+                    Span::styled(
+                        if form.ssh_key_data.is_empty() {
+                            "<paste private key>"
+                        } else {
+                            "<key data entered>"
+                        },
+                        if form.current_field == 4 {
+                            Style::default().bg(Color::DarkGray)
+                        } else {
+                            Style::default().fg(Color::Gray)
+                        },
+                    ),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::raw("Passphrase (optional): "),
+                    Span::styled(
+                        "*".repeat(form.passphrase.len()),
+                        if form.current_field == 5 {
+                            Style::default().bg(Color::DarkGray)
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                ]));
+            }
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "[Tab]",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" Next | "),
+            Span::styled(
+                "[←/→/Space]",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" Change Type | "),
+            Span::styled(
+                "[Enter]",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" Save | "),
+            Span::styled(
+                "[Esc]",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" Cancel"),
+        ]));
+
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+        f.render_widget(paragraph, inner);
     }
 
     fn render_history_view(&mut self, f: &mut Frame) {
@@ -1405,9 +1610,39 @@ impl NetworkMonitorTui {
         false
     }
 
-    fn handle_credential_form_input(&mut self, _key: KeyCode) -> bool {
-        // Simplified - full implementation would handle credential form input
-        true
+    fn handle_credential_form_input(&mut self, key: KeyCode) -> bool {
+        match key {
+            KeyCode::Esc => return true,
+            KeyCode::Enter => {
+                self.save_credential_from_form();
+                return true;
+            }
+            KeyCode::Tab => {
+                self.credential_form.current_field = (self.credential_form.current_field + 1)
+                    % self.credential_form.get_field_count();
+            }
+            KeyCode::BackTab => {
+                if self.credential_form.current_field == 0 {
+                    self.credential_form.current_field = self.credential_form.get_field_count() - 1;
+                } else {
+                    self.credential_form.current_field -= 1;
+                }
+            }
+            KeyCode::Left | KeyCode::Right => {
+                // Handle arrow keys for Credential Type field
+                if self.credential_form.current_field == 2 {
+                    self.cycle_credential_type(key == KeyCode::Right);
+                }
+            }
+            KeyCode::Char(c) => {
+                self.add_char_to_credential_field(c);
+            }
+            KeyCode::Backspace => {
+                self.remove_char_from_credential_field();
+            }
+            _ => {}
+        }
+        false
     }
 
     fn handle_confirm_delete_input(&mut self, key: KeyCode) -> bool {
@@ -1453,6 +1688,184 @@ impl NetworkMonitorTui {
     }
 
     // Helper methods
+
+    fn cycle_credential_type(&mut self, forward: bool) {
+        self.credential_form.credential_type = if forward {
+            match self.credential_form.credential_type {
+                CredentialTypeForm::Default => CredentialTypeForm::Password,
+                CredentialTypeForm::Password => CredentialTypeForm::KeyFile,
+                CredentialTypeForm::KeyFile => CredentialTypeForm::KeyData,
+                CredentialTypeForm::KeyData => CredentialTypeForm::Default,
+            }
+        } else {
+            match self.credential_form.credential_type {
+                CredentialTypeForm::Default => CredentialTypeForm::KeyData,
+                CredentialTypeForm::KeyData => CredentialTypeForm::KeyFile,
+                CredentialTypeForm::KeyFile => CredentialTypeForm::Password,
+                CredentialTypeForm::Password => CredentialTypeForm::Default,
+            }
+        };
+    }
+
+    fn add_char_to_credential_field(&mut self, c: char) {
+        let field = self.credential_form.current_field;
+        match field {
+            0 => self.credential_form.name.push(c),
+            1 => self.credential_form.description.push(c),
+            2 => {
+                // Cycle through credential types with Space only
+                if c == ' ' {
+                    self.cycle_credential_type(true);
+                }
+            }
+            3 => match self.credential_form.credential_type {
+                CredentialTypeForm::Default => {} // No username field for Default
+                CredentialTypeForm::Password
+                | CredentialTypeForm::KeyFile
+                | CredentialTypeForm::KeyData => self.credential_form.username.push(c),
+            },
+            4 => match self.credential_form.credential_type {
+                CredentialTypeForm::Default => {} // No field 4 for Default
+                CredentialTypeForm::Password => self.credential_form.password.push(c),
+                CredentialTypeForm::KeyFile => self.credential_form.ssh_key_path.push(c),
+                CredentialTypeForm::KeyData => self.credential_form.ssh_key_data.push(c),
+            },
+            5 => match self.credential_form.credential_type {
+                CredentialTypeForm::KeyFile | CredentialTypeForm::KeyData => {
+                    self.credential_form.passphrase.push(c)
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    fn remove_char_from_credential_field(&mut self) {
+        let field = self.credential_form.current_field;
+        match field {
+            0 => {
+                self.credential_form.name.pop();
+            }
+            1 => {
+                self.credential_form.description.pop();
+            }
+            2 => {} // Credential type
+            3 => match self.credential_form.credential_type {
+                CredentialTypeForm::Default => {}
+                CredentialTypeForm::Password
+                | CredentialTypeForm::KeyFile
+                | CredentialTypeForm::KeyData => {
+                    self.credential_form.username.pop();
+                }
+            },
+            4 => match self.credential_form.credential_type {
+                CredentialTypeForm::Default => {}
+                CredentialTypeForm::Password => {
+                    self.credential_form.password.pop();
+                }
+                CredentialTypeForm::KeyFile => {
+                    self.credential_form.ssh_key_path.pop();
+                }
+                CredentialTypeForm::KeyData => {
+                    self.credential_form.ssh_key_data.pop();
+                }
+            },
+            5 => match self.credential_form.credential_type {
+                CredentialTypeForm::KeyFile | CredentialTypeForm::KeyData => {
+                    self.credential_form.passphrase.pop();
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    fn save_credential_from_form(&mut self) {
+        use crate::credentials::{SensitiveString, SshCredential};
+        use std::path::PathBuf;
+
+        if self.credential_form.name.trim().is_empty() {
+            self.set_status_message("Credential name cannot be empty");
+            return;
+        }
+
+        let credential = match self.credential_form.credential_type {
+            CredentialTypeForm::Default => SshCredential::Default,
+            CredentialTypeForm::Password => {
+                if self.credential_form.username.trim().is_empty()
+                    || self.credential_form.password.trim().is_empty()
+                {
+                    self.set_status_message("Username and password are required");
+                    return;
+                }
+                SshCredential::Password {
+                    username: self.credential_form.username.clone(),
+                    password: SensitiveString::new(self.credential_form.password.clone()),
+                }
+            }
+            CredentialTypeForm::KeyFile => {
+                if self.credential_form.username.trim().is_empty()
+                    || self.credential_form.ssh_key_path.trim().is_empty()
+                {
+                    self.set_status_message("Username and SSH key path are required");
+                    return;
+                }
+                SshCredential::Key {
+                    username: self.credential_form.username.clone(),
+                    private_key_path: PathBuf::from(&self.credential_form.ssh_key_path),
+                    passphrase: if self.credential_form.passphrase.trim().is_empty() {
+                        None
+                    } else {
+                        Some(SensitiveString::new(
+                            self.credential_form.passphrase.clone(),
+                        ))
+                    },
+                }
+            }
+            CredentialTypeForm::KeyData => {
+                if self.credential_form.username.trim().is_empty()
+                    || self.credential_form.ssh_key_data.trim().is_empty()
+                {
+                    self.set_status_message("Username and SSH key data are required");
+                    return;
+                }
+                SshCredential::KeyData {
+                    username: self.credential_form.username.clone(),
+                    private_key_data: SensitiveString::new(
+                        self.credential_form.ssh_key_data.clone(),
+                    ),
+                    passphrase: if self.credential_form.passphrase.trim().is_empty() {
+                        None
+                    } else {
+                        Some(SensitiveString::new(
+                            self.credential_form.passphrase.clone(),
+                        ))
+                    },
+                }
+            }
+        };
+
+        let description = if self.credential_form.description.trim().is_empty() {
+            None
+        } else {
+            Some(self.credential_form.description.clone())
+        };
+
+        match self.credential_store.store_credential(
+            self.credential_form.name.clone(),
+            description,
+            credential,
+        ) {
+            Ok(_) => {
+                self.set_status_message("Credential saved successfully");
+                self.reload_credentials();
+                self.credential_form = CredentialForm::default();
+            }
+            Err(e) => {
+                self.set_status_message(format!("Failed to save credential: {}", e));
+            }
+        }
+    }
 
     fn cycle_monitor_type(&mut self, forward: bool) {
         self.node_form.monitor_type = if forward {
