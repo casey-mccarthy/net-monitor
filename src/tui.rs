@@ -270,6 +270,7 @@ pub struct NetworkMonitorTui {
     // Status history
     viewing_history_node_id: Option<i64>,
     status_changes: Vec<StatusChange>,
+    history_table_state: TableState,
     // Delete confirmation
     delete_node_index: Option<usize>,
     delete_credential_index: Option<usize>,
@@ -322,6 +323,7 @@ impl NetworkMonitorTui {
             credential_form: CredentialForm::default(),
             viewing_history_node_id: None,
             status_changes: Vec::new(),
+            history_table_state: TableState::default(),
             delete_node_index: None,
             delete_credential_index: None,
             return_to_credentials_after_delete: false,
@@ -444,13 +446,42 @@ impl NetworkMonitorTui {
                                 }
                             }
                             AppState::ViewHistory => {
-                                if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
-                                    self.state = AppState::Main;
-                                    self.viewing_history_node_id = None;
-                                    self.status_changes.clear();
-                                } else if matches!(key.code, KeyCode::Char('?')) {
-                                    self.previous_state = Some(AppState::ViewHistory);
-                                    self.state = AppState::Help;
+                                match key.code {
+                                    KeyCode::Esc | KeyCode::Char('q') => {
+                                        self.state = AppState::Main;
+                                        self.viewing_history_node_id = None;
+                                        self.status_changes.clear();
+                                        self.history_table_state.select(None);
+                                    }
+                                    KeyCode::Char('?') => {
+                                        self.previous_state = Some(AppState::ViewHistory);
+                                        self.state = AppState::Help;
+                                    }
+                                    KeyCode::Down => {
+                                        let i = match self.history_table_state.selected() {
+                                            Some(i) => {
+                                                if i >= self.status_changes.len().saturating_sub(1) {
+                                                    i
+                                                } else {
+                                                    i + 1
+                                                }
+                                            }
+                                            None => 0,
+                                        };
+                                        if !self.status_changes.is_empty() {
+                                            self.history_table_state.select(Some(i));
+                                        }
+                                    }
+                                    KeyCode::Up => {
+                                        let i = match self.history_table_state.selected() {
+                                            Some(i) => i.saturating_sub(1),
+                                            None => 0,
+                                        };
+                                        if !self.status_changes.is_empty() {
+                                            self.history_table_state.select(Some(i));
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                             AppState::Help => {
@@ -1395,12 +1426,20 @@ impl NetworkMonitorTui {
                     Constraint::Percentage(30),
                 ],
             )
-            .header(header);
+            .header(header)
+            .highlight_style(
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(">> ");
 
-            f.render_widget(table, chunks[1]);
+            f.render_stateful_widget(table, chunks[1], &mut self.history_table_state);
         }
 
         let help = Paragraph::new(Line::from(vec![
+            Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Scroll | "),
             Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
             Span::raw(" Close"),
         ]));
@@ -2674,10 +2713,17 @@ impl NetworkMonitorTui {
         match self.database.get_status_changes(node_id, Some(50)) {
             Ok(changes) => {
                 self.status_changes = changes;
+                // Select first row if there are any changes
+                if !self.status_changes.is_empty() {
+                    self.history_table_state.select(Some(0));
+                } else {
+                    self.history_table_state.select(None);
+                }
             }
             Err(e) => {
                 error!("Failed to load status history: {}", e);
                 self.status_changes.clear();
+                self.history_table_state.select(None);
             }
         }
     }
