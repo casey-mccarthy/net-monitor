@@ -1,7 +1,7 @@
 use crate::credentials::{CredentialStore, SshCredential};
 use anyhow::{anyhow, Result};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use tracing::{error, info, warn};
 
 /// Trait defining the connection strategy interface
@@ -217,6 +217,9 @@ impl AuthenticatedConnectionStrategy for SshConnectionStrategy {
             Command::new("osascript")
                 .arg("-e")
                 .arg(&script)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .spawn()
                 .map_err(|e| {
                     error!("Failed to open Terminal for SSH: {}", e);
@@ -233,6 +236,9 @@ impl AuthenticatedConnectionStrategy for SshConnectionStrategy {
                 .arg("cmd")
                 .arg("/k")
                 .arg(&ssh_command_str)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .spawn();
 
             if result.is_err() {
@@ -243,6 +249,9 @@ impl AuthenticatedConnectionStrategy for SshConnectionStrategy {
                     .arg("cmd")
                     .arg("/k")
                     .arg(&ssh_command_str)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
                     .spawn()
                     .map_err(|e| {
                         error!("Failed to open terminal for SSH: {}", e);
@@ -277,6 +286,10 @@ impl AuthenticatedConnectionStrategy for SshConnectionStrategy {
                 } else {
                     cmd.arg(&ssh_command_str);
                 }
+
+                cmd.stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
 
                 if cmd.spawn().is_ok() {
                     success = true;
