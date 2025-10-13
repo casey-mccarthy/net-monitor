@@ -281,6 +281,8 @@ pub struct NetworkMonitorTui {
     // Cursor blink state for empty fields
     cursor_blink_state: bool,
     last_blink_time: Instant,
+    // Help context
+    previous_state: Option<AppState>,
 }
 
 impl NetworkMonitorTui {
@@ -327,6 +329,7 @@ impl NetworkMonitorTui {
             last_input_time: Some(Instant::now()),
             cursor_blink_state: true,
             last_blink_time: Instant::now(),
+            previous_state: None,
         };
 
         // Select first node if any exist
@@ -445,11 +448,15 @@ impl NetworkMonitorTui {
                                     self.state = AppState::Main;
                                     self.viewing_history_node_id = None;
                                     self.status_changes.clear();
+                                } else if matches!(key.code, KeyCode::Char('?')) {
+                                    self.previous_state = Some(AppState::ViewHistory);
+                                    self.state = AppState::Help;
                                 }
                             }
                             AppState::Help => {
-                                if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
-                                    self.state = AppState::Main;
+                                if matches!(key.code, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?')) {
+                                    self.state = self.previous_state.unwrap_or(AppState::Main);
+                                    self.previous_state = None;
                                 }
                             }
                             AppState::ConfirmDelete => {
@@ -1401,73 +1408,196 @@ impl NetworkMonitorTui {
     }
 
     fn render_help_view(&mut self, f: &mut Frame) {
-        let area = centered_rect(60, 60, f.area());
+        let area = centered_rect(60, 70, f.area());
         f.render_widget(Clear, area);
 
+        let (title, help_text) = match self.previous_state {
+            Some(AppState::Main) | None => ("Help - Main View", vec![
+                Line::from(vec![
+                    Span::styled("m", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Start/Stop monitoring"),
+                ]),
+                Line::from(vec![
+                    Span::styled("a", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Add new node"),
+                ]),
+                Line::from(vec![
+                    Span::styled("e", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Edit selected node"),
+                ]),
+                Line::from(vec![
+                    Span::styled("d", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Delete selected node"),
+                ]),
+                Line::from(vec![
+                    Span::styled("h", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - View status history"),
+                ]),
+                Line::from(vec![
+                    Span::styled("c", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Manage credentials"),
+                ]),
+                Line::from(vec![
+                    Span::styled("i", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Import nodes from JSON"),
+                ]),
+                Line::from(vec![
+                    Span::styled("x", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Export nodes to JSON"),
+                ]),
+                Line::from(vec![
+                    Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Navigate nodes"),
+                ]),
+                Line::from(vec![
+                    Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Connect to selected node"),
+                ]),
+                Line::from(vec![
+                    Span::styled("?", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Show this help"),
+                ]),
+                Line::from(vec![
+                    Span::styled("q", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Quit application"),
+                ]),
+            ]),
+            Some(AppState::AddNode) | Some(AppState::EditNode) => ("Help - Node Form", vec![
+                Line::from(vec![
+                    Span::styled("Tab", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Move to next field"),
+                ]),
+                Line::from(vec![
+                    Span::styled("Shift+Tab", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Move to previous field"),
+                ]),
+                Line::from(vec![
+                    Span::styled("←/→/Space", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Change monitor type"),
+                ]),
+                Line::from(vec![
+                    Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Save node"),
+                ]),
+                Line::from(vec![
+                    Span::styled("Esc", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Cancel"),
+                ]),
+            ]),
+            Some(AppState::ManageCredentials) => ("Help - Credentials Manager", vec![
+                Line::from(vec![
+                    Span::styled("a", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Add new credential"),
+                ]),
+                Line::from(vec![
+                    Span::styled("d", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Delete selected credential"),
+                ]),
+                Line::from(vec![
+                    Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Navigate credentials"),
+                ]),
+                Line::from(vec![
+                    Span::styled("Esc/q", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Return to main view"),
+                ]),
+            ]),
+            Some(AppState::AddCredential) => ("Help - Credential Form", vec![
+                Line::from(vec![
+                    Span::styled("Tab", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Move to next field"),
+                ]),
+                Line::from(vec![
+                    Span::styled("Shift+Tab", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Move to previous field"),
+                ]),
+                Line::from(vec![
+                    Span::styled("←/→/Space", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Change credential type"),
+                ]),
+                Line::from(vec![
+                    Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Save credential"),
+                ]),
+                Line::from(vec![
+                    Span::styled("Esc", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Cancel"),
+                ]),
+            ]),
+            Some(AppState::ViewHistory) => ("Help - Status History", vec![
+                Line::from(vec![
+                    Span::raw("View node status change history and uptime statistics."),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Esc/q", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Return to main view"),
+                ]),
+            ]),
+            Some(AppState::ImportNodes) => ("Help - Import Nodes", vec![
+                Line::from(vec![
+                    Span::raw("Enter the path to a JSON file to import nodes."),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Confirm import"),
+                ]),
+                Line::from(vec![
+                    Span::styled("Esc", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Cancel"),
+                ]),
+            ]),
+            Some(AppState::ExportNodes) => ("Help - Export Nodes", vec![
+                Line::from(vec![
+                    Span::raw("Enter the path where nodes will be exported as JSON."),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Confirm export"),
+                ]),
+                Line::from(vec![
+                    Span::styled("Esc", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Cancel"),
+                ]),
+            ]),
+            Some(AppState::ConfirmDelete) => ("Help - Confirm Delete", vec![
+                Line::from(vec![
+                    Span::raw("Confirm deletion of the selected item."),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Y", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Confirm deletion"),
+                ]),
+                Line::from(vec![
+                    Span::styled("N/Esc", Style::default().fg(Color::Yellow)),
+                    Span::raw(" - Cancel"),
+                ]),
+            ]),
+            Some(AppState::Help) => ("Help", vec![
+                Line::from(vec![
+                    Span::raw("You're already viewing help!"),
+                ]),
+            ]),
+        };
+
         let block = Block::default()
-            .title("Help - Keyboard Shortcuts")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan));
 
-        let help_text = vec![
-            Line::from(vec![
-                Span::styled("m", Style::default().fg(Color::Yellow)),
-                Span::raw(" - Start/Stop monitoring"),
-            ]),
-            Line::from(vec![
-                Span::styled("a", Style::default().fg(Color::Yellow)),
-                Span::raw(" - Add new node"),
-            ]),
-            Line::from(vec![
-                Span::styled("e", Style::default().fg(Color::Yellow)),
-                Span::raw(" - Edit selected node"),
-            ]),
-            Line::from(vec![
-                Span::styled("d", Style::default().fg(Color::Yellow)),
-                Span::raw(" - Delete selected node"),
-            ]),
-            Line::from(vec![
-                Span::styled("h", Style::default().fg(Color::Yellow)),
-                Span::raw(" - View status history"),
-            ]),
-            Line::from(vec![
-                Span::styled("c", Style::default().fg(Color::Yellow)),
-                Span::raw(" - Manage credentials"),
-            ]),
-            Line::from(vec![
-                Span::styled("i", Style::default().fg(Color::Yellow)),
-                Span::raw(" - Import nodes from JSON"),
-            ]),
-            Line::from(vec![
-                Span::styled("x", Style::default().fg(Color::Yellow)),
-                Span::raw(" - Export nodes to JSON"),
-            ]),
-            Line::from(vec![
-                Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
-                Span::raw(" - Navigate nodes"),
-            ]),
-            Line::from(vec![
-                Span::styled("Enter", Style::default().fg(Color::Yellow)),
-                Span::raw(" - Connect to selected node"),
-            ]),
-            Line::from(vec![
-                Span::styled("?", Style::default().fg(Color::Yellow)),
-                Span::raw(" - Show this help"),
-            ]),
-            Line::from(vec![
-                Span::styled("q", Style::default().fg(Color::Yellow)),
-                Span::raw(" - Quit application"),
-            ]),
-            Line::from(""),
-            Line::from(vec![Span::styled(
-                "Press Esc or q to close this help",
-                Style::default()
-                    .fg(Color::Gray)
-                    .add_modifier(Modifier::ITALIC),
-            )]),
-        ];
+        let mut final_help_text = help_text;
+        final_help_text.push(Line::from(""));
+        final_help_text.push(Line::from(vec![Span::styled(
+            "Press Esc, q, or ? to close this help",
+            Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::ITALIC),
+        )]));
 
-        let paragraph = Paragraph::new(help_text)
+        let paragraph = Paragraph::new(final_help_text)
             .block(block)
             .wrap(Wrap { trim: true });
 
@@ -1653,6 +1783,7 @@ impl NetworkMonitorTui {
                 self.state = AppState::ExportNodes;
             }
             KeyCode::Char('?') => {
+                self.previous_state = Some(AppState::Main);
                 self.state = AppState::Help;
             }
             KeyCode::Down => {
@@ -1725,6 +1856,11 @@ impl NetworkMonitorTui {
                     self.cycle_monitor_type(key == KeyCode::Right);
                 }
             }
+            KeyCode::Char('?') => {
+                self.previous_state = Some(self.state);
+                self.state = AppState::Help;
+                return false;
+            }
             KeyCode::Char(c) => {
                 self.add_char_to_form_field(c);
             }
@@ -1749,6 +1885,11 @@ impl NetworkMonitorTui {
                     self.return_to_credentials_after_delete = true;
                     self.state = AppState::ConfirmDelete;
                 }
+            }
+            KeyCode::Char('?') => {
+                self.previous_state = Some(AppState::ManageCredentials);
+                self.state = AppState::Help;
+                return false;
             }
             KeyCode::Down => {
                 let i = match self.list_state.selected() {
@@ -1809,6 +1950,11 @@ impl NetworkMonitorTui {
                     self.cycle_credential_type(key == KeyCode::Right);
                 }
             }
+            KeyCode::Char('?') => {
+                self.previous_state = Some(AppState::AddCredential);
+                self.state = AppState::Help;
+                return false;
+            }
             KeyCode::Char(c) => {
                 self.add_char_to_credential_field(c);
             }
@@ -1850,6 +1996,11 @@ impl NetworkMonitorTui {
                     self.export_nodes();
                 }
                 return true;
+            }
+            KeyCode::Char('?') => {
+                self.previous_state = Some(self.state);
+                self.state = AppState::Help;
+                return false;
             }
             KeyCode::Char(c) => {
                 self.import_export_path.push(c);
