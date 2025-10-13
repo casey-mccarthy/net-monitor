@@ -606,7 +606,7 @@ impl NetworkMonitorTui {
 
                 // Add pulsing indicator when check just occurred
                 let last_check_display = if flash_intensity > 0.0 {
-                    format!("⟳ {}", last_check)
+                    format!("{} ⟳", last_check)
                 } else {
                     last_check
                 };
