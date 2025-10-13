@@ -1357,11 +1357,24 @@ impl NetworkMonitorTui {
                         .map(format_duration)
                         .unwrap_or_else(|| "N/A".to_string());
 
+                    // Color-code status fields
+                    let from_color = match change.from_status {
+                        NodeStatus::Online => Color::Green,
+                        NodeStatus::Offline => Color::Red,
+                    };
+
+                    let to_color = match change.to_status {
+                        NodeStatus::Online => Color::Green,
+                        NodeStatus::Offline => Color::Red,
+                    };
+
                     Row::new(vec![
-                        timestamp,
-                        change.from_status.to_string(),
-                        change.to_status.to_string(),
-                        duration,
+                        Cell::from(timestamp),
+                        Cell::from(change.from_status.to_string())
+                            .style(Style::default().fg(from_color)),
+                        Cell::from(change.to_status.to_string())
+                            .style(Style::default().fg(to_color)),
+                        Cell::from(duration),
                     ])
                 })
                 .collect();
