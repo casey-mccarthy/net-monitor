@@ -2037,7 +2037,10 @@ impl NetworkMonitorTui {
                                 self.set_status_message("Credential not found");
                             }
                             Err(e) => {
-                                self.set_status_message(format!("Failed to load credential: {}", e));
+                                self.set_status_message(format!(
+                                    "Failed to load credential: {}",
+                                    e
+                                ));
                             }
                         }
                     }
