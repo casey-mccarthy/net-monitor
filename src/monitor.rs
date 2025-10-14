@@ -47,7 +47,14 @@ pub async fn check_node(node: &Node) -> Result<MonitoringResult> {
 
 async fn check_http(url: &str, expected_status: u16) -> Result<String> {
     info!("Checking HTTP for {}", url);
-    let client = reqwest::Client::new();
+
+    // Build client that accepts self-signed certificates
+    // This is necessary for monitoring internal services (e.g., Proxmox on private IPs)
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
     let res = client.get(url).send().await?;
     let status = res.status();
     if status.as_u16() == expected_status {
