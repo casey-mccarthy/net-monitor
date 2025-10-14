@@ -221,6 +221,72 @@ impl CredentialForm {
             CredentialTypeForm::KeyData => 6, // name, description, type, username, key_data, passphrase
         }
     }
+
+    fn from_stored_credential(stored: &crate::credentials::StoredCredential) -> Self {
+        use crate::credentials::SshCredential;
+
+        let (credential_type, username, password, ssh_key_path, ssh_key_data, passphrase) =
+            match &stored.credential {
+                SshCredential::Default => (
+                    CredentialTypeForm::Default,
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                ),
+                SshCredential::Password { username, password } => (
+                    CredentialTypeForm::Password,
+                    username.clone(),
+                    password.as_str().to_string(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                ),
+                SshCredential::Key {
+                    username,
+                    private_key_path,
+                    passphrase,
+                } => (
+                    CredentialTypeForm::KeyFile,
+                    username.clone(),
+                    String::new(),
+                    private_key_path.to_string_lossy().to_string(),
+                    String::new(),
+                    passphrase
+                        .as_ref()
+                        .map(|p| p.as_str().to_string())
+                        .unwrap_or_default(),
+                ),
+                SshCredential::KeyData {
+                    username,
+                    private_key_data,
+                    passphrase,
+                } => (
+                    CredentialTypeForm::KeyData,
+                    username.clone(),
+                    String::new(),
+                    String::new(),
+                    private_key_data.as_str().to_string(),
+                    passphrase
+                        .as_ref()
+                        .map(|p| p.as_str().to_string())
+                        .unwrap_or_default(),
+                ),
+            };
+
+        Self {
+            name: stored.name.clone(),
+            description: stored.description.clone().unwrap_or_default(),
+            credential_type,
+            username,
+            password,
+            ssh_key_path,
+            ssh_key_data,
+            passphrase,
+            current_field: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -231,6 +297,7 @@ enum AppState {
     ViewHistory,
     ManageCredentials,
     AddCredential,
+    EditCredential,
     Help,
     ConfirmDelete,
     ImportNodes,
@@ -267,6 +334,7 @@ pub struct NetworkMonitorTui {
     credential_store: Box<dyn CredentialStore>,
     credentials: Vec<CredentialSummary>,
     credential_form: CredentialForm,
+    editing_credential_id: Option<String>,
     // Status history
     viewing_history_node_id: Option<i64>,
     status_changes: Vec<StatusChange>,
@@ -321,6 +389,7 @@ impl NetworkMonitorTui {
             credential_store,
             credentials,
             credential_form: CredentialForm::default(),
+            editing_credential_id: None,
             viewing_history_node_id: None,
             status_changes: Vec::new(),
             history_table_state: TableState::default(),
@@ -440,7 +509,7 @@ impl NetworkMonitorTui {
                                     self.state = AppState::Main;
                                 }
                             }
-                            AppState::AddCredential => {
+                            AppState::AddCredential | AppState::EditCredential => {
                                 if self.handle_credential_form_input(key.code) {
                                     self.state = AppState::ManageCredentials;
                                 }
@@ -521,7 +590,7 @@ impl NetworkMonitorTui {
             AppState::Main => self.render_main_view(f),
             AppState::AddNode | AppState::EditNode => self.render_node_form(f),
             AppState::ManageCredentials => self.render_credentials_view(f),
-            AppState::AddCredential => self.render_credential_form(f),
+            AppState::AddCredential | AppState::EditCredential => self.render_credential_form(f),
             AppState::ViewHistory => self.render_history_view(f),
             AppState::Help => self.render_help_view(f),
             AppState::ConfirmDelete => self.render_confirm_delete(f),
@@ -1020,6 +1089,8 @@ impl NetworkMonitorTui {
             Span::raw("["),
             Span::styled("A", Style::default().fg(Color::Yellow)),
             Span::raw("]dd | ["),
+            Span::styled("E", Style::default().fg(Color::Yellow)),
+            Span::raw("]dit | ["),
             Span::styled("D", Style::default().fg(Color::Yellow)),
             Span::raw("]elete | ["),
             Span::styled("Esc", Style::default().fg(Color::Yellow)),
@@ -1056,8 +1127,14 @@ impl NetworkMonitorTui {
         let area = centered_rect(70, 80, f.area());
         f.render_widget(Clear, area);
 
+        let title = if self.editing_credential_id.is_some() {
+            "Edit Credential"
+        } else {
+            "Add Credential"
+        };
+
         let block = Block::default()
-            .title("Add Credential")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan));
 
@@ -1538,6 +1615,10 @@ impl NetworkMonitorTui {
                         Span::raw(" - Add new credential"),
                     ]),
                     Line::from(vec![
+                        Span::styled("e", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Edit selected credential"),
+                    ]),
+                    Line::from(vec![
                         Span::styled("d", Style::default().fg(Color::Yellow)),
                         Span::raw(" - Delete selected credential"),
                     ]),
@@ -1551,7 +1632,7 @@ impl NetworkMonitorTui {
                     ]),
                 ],
             ),
-            Some(AppState::AddCredential) => (
+            Some(AppState::AddCredential) | Some(AppState::EditCredential) => (
                 "Help - Credential Form",
                 vec![
                     Line::from(vec![
@@ -1938,7 +2019,29 @@ impl NetworkMonitorTui {
             KeyCode::Esc | KeyCode::Char('q') => return true,
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.credential_form = CredentialForm::default();
+                self.editing_credential_id = None;
                 self.state = AppState::AddCredential;
+            }
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                if let Some(selected) = self.list_state.selected() {
+                    if let Some(credential_summary) = self.credentials.get(selected) {
+                        // Retrieve the full credential from the store
+                        match self.credential_store.get_credential(&credential_summary.id) {
+                            Ok(Some(stored_credential)) => {
+                                self.credential_form =
+                                    CredentialForm::from_stored_credential(&stored_credential);
+                                self.editing_credential_id = Some(credential_summary.id.clone());
+                                self.state = AppState::EditCredential;
+                            }
+                            Ok(None) => {
+                                self.set_status_message("Credential not found");
+                            }
+                            Err(e) => {
+                                self.set_status_message(format!("Failed to load credential: {}", e));
+                            }
+                        }
+                    }
+                }
             }
             KeyCode::Char('d') | KeyCode::Char('D') => {
                 if let Some(selected) = self.list_state.selected() {
@@ -2238,15 +2341,33 @@ impl NetworkMonitorTui {
             Some(self.credential_form.description.clone())
         };
 
-        match self.credential_store.store_credential(
-            self.credential_form.name.clone(),
-            description,
-            credential,
-        ) {
+        // Check if we're editing an existing credential or creating a new one
+        let result = if let Some(credential_id) = &self.editing_credential_id {
+            // Update existing credential
+            self.credential_store.update_credential(
+                credential_id,
+                self.credential_form.name.clone(),
+                description,
+                credential,
+            )
+        } else {
+            // Create new credential
+            self.credential_store
+                .store_credential(self.credential_form.name.clone(), description, credential)
+                .map(|_| ())
+        };
+
+        match result {
             Ok(_) => {
-                self.set_status_message("Credential saved successfully");
+                let message = if self.editing_credential_id.is_some() {
+                    "Credential updated successfully"
+                } else {
+                    "Credential saved successfully"
+                };
+                self.set_status_message(message);
                 self.reload_credentials();
                 self.credential_form = CredentialForm::default();
+                self.editing_credential_id = None;
             }
             Err(e) => {
                 self.set_status_message(format!("Failed to save credential: {}", e));
