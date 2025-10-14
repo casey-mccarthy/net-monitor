@@ -83,9 +83,13 @@ Note: The project uses `.cargo/audit.toml` to ignore known vulnerabilities that 
 
 When making changes:
 1. Run `cargo fmt` to format code
-2. Run `RUSTFLAGS="-A dead_code" cargo test --all-features` to test
-3. Run `RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warnings` for linting
-4. Run `RUSTFLAGS="-A dead_code" cargo build --release` for final build
+2. **IMPORTANT:** Commit formatting changes if any were made: `git add -A && git commit -m "style: apply formatting"`
+3. Run `cargo fmt -- --check` to verify formatting
+4. Run `RUSTFLAGS="-A dead_code" cargo test --all-features` to test
+5. Run `RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warnings` for linting
+6. Run `RUSTFLAGS="-A dead_code" cargo build --release` for final build
+
+**⚠️ KEY POINT:** Always commit formatting changes immediately after running `cargo fmt`. Never push code with uncommitted formatting changes, as this will cause CI failures.
 
 ## Git Workflow
 
@@ -129,27 +133,38 @@ Before pushing to remote and creating a PR, run these checks locally:
 # 1. Apply formatting
 cargo fmt
 
-# 2. Check formatting (verify no changes needed)
+# 2. Check if formatting made any changes and commit them
+if ! git diff --quiet; then
+    git add -A
+    git commit -m "style: apply cargo fmt formatting fixes"
+fi
+
+# 3. Verify formatting is correct (should pass now)
 cargo fmt -- --check
 
-# 3. Run tests
+# 4. Run tests
 RUSTFLAGS="-A dead_code" cargo test --all-features
 
-# 4. Run clippy
+# 5. Run clippy
 RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warnings
 
-# 5. Run integration tests
+# 6. Run integration tests
 RUSTFLAGS="-A dead_code" cargo test --test integration_tests
 ```
 
 **All-in-One Pre-Push Check:**
 ```bash
 cargo fmt && \
+(git diff --quiet || (git add -A && git commit -m "style: apply cargo fmt formatting fixes")) && \
 cargo fmt -- --check && \
 RUSTFLAGS="-A dead_code" cargo test --all-features && \
 RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warnings && \
 RUSTFLAGS="-A dead_code" cargo test --test integration_tests
 ```
+
+**⚠️ CRITICAL: Always commit formatting changes before pushing!**
+
+If `cargo fmt` makes any changes to your code, those changes MUST be committed before pushing and creating a PR. Otherwise, CI formatting checks will fail. The commands above automatically handle this.
 
 #### 4. Rebase on Main Before PR
 ```bash
