@@ -1942,9 +1942,9 @@ impl NetworkMonitorTui {
             }
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 if let Some(selected) = self.table_state.selected() {
-                    if let Some(node) = self.nodes.get(selected) {
+                    if let Some(node) = self.nodes.get(selected).cloned() {
                         self.reload_credentials();
-                        self.node_form = self.node_form_from_node(node);
+                        self.node_form = self.node_form_from_node(&node);
                         self.editing_node_id = node.id;
                         self.state = AppState::EditNode;
                     }
@@ -2479,34 +2479,35 @@ impl NetworkMonitorTui {
             return;
         }
 
+        // Clone credential IDs to avoid borrow issues
+        let cred_ids: Vec<String> = compatible_creds.iter().map(|c| c.id.clone()).collect();
+
         let new_index = match self.node_form.credential_index {
             None => {
                 // Currently "None" selected
                 if forward {
                     Some(0) // Move to first credential
                 } else {
-                    Some(compatible_creds.len() - 1) // Move to last credential
+                    Some(cred_ids.len() - 1) // Move to last credential
                 }
             }
             Some(current_idx) => {
                 if forward {
-                    if current_idx >= compatible_creds.len() - 1 {
+                    if current_idx >= cred_ids.len() - 1 {
                         None // Wrap around to "None"
                     } else {
                         Some(current_idx + 1)
                     }
+                } else if current_idx == 0 {
+                    None // Wrap around to "None"
                 } else {
-                    if current_idx == 0 {
-                        None // Wrap around to "None"
-                    } else {
-                        Some(current_idx - 1)
-                    }
+                    Some(current_idx - 1)
                 }
             }
         };
 
         self.node_form.credential_index = new_index;
-        self.node_form.credential_id = new_index.map(|idx| compatible_creds[idx].id.clone());
+        self.node_form.credential_id = new_index.map(|idx| cred_ids[idx].clone());
     }
 
     fn node_form_from_node(&self, node: &Node) -> NodeForm {
