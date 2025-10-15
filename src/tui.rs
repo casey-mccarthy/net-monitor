@@ -68,6 +68,7 @@ struct NodeForm {
     tcp_timeout: String,
     // Form state
     current_field: usize,
+    credential_index: Option<usize>, // Index in filtered credential list, None = "None" selection
 }
 
 impl Default for NodeForm {
@@ -86,6 +87,7 @@ impl Default for NodeForm {
             tcp_port: String::new(),
             tcp_timeout: "5".to_string(),
             current_field: 0,
+            credential_index: None,
         }
     }
 }
@@ -886,17 +888,67 @@ impl NetworkMonitorTui {
                     Span::raw("")
                 },
             ]),
-            Line::from(vec![
-                Span::raw("Credential: "),
-                Span::styled(
-                    form.credential_id.as_deref().unwrap_or("None"),
-                    if form.current_field == 3 {
-                        Style::default().bg(Color::DarkGray)
-                    } else {
-                        Style::default()
-                    },
-                ),
-            ]),
+            {
+                // Build credential line with name and appropriate hints
+                let compatible_creds = self.get_compatible_credentials();
+                let credential_text = match form.credential_index {
+                    None => "None".to_string(),
+                    Some(idx) => {
+                        if idx < compatible_creds.len() {
+                            compatible_creds[idx].name.clone()
+                        } else {
+                            "None".to_string()
+                        }
+                    }
+                };
+
+                let hint = match form.monitor_type {
+                    MonitorTypeForm::Http => {
+                        if form.current_field == 3 {
+                            Span::styled("[Not applicable]", Style::default().fg(Color::Gray))
+                        } else {
+                            Span::raw("")
+                        }
+                    }
+                    MonitorTypeForm::Ping | MonitorTypeForm::Tcp => {
+                        if form.current_field == 3 {
+                            if compatible_creds.is_empty() {
+                                Span::styled(
+                                    "[No credentials - press 'c' to manage]",
+                                    Style::default().fg(Color::Yellow),
+                                )
+                            } else {
+                                Span::styled(
+                                    "[←/→ or Space, 'x' to clear]",
+                                    Style::default().fg(Color::Gray),
+                                )
+                            }
+                        } else {
+                            Span::raw("")
+                        }
+                    }
+                };
+
+                Line::from(vec![
+                    Span::raw("Credential: "),
+                    Span::styled(
+                        credential_text,
+                        if form.current_field == 3 {
+                            match form.monitor_type {
+                                MonitorTypeForm::Http => {
+                                    // Gray out for HTTP as it's not applicable
+                                    Style::default().bg(Color::DarkGray).fg(Color::DarkGray)
+                                }
+                                _ => Style::default().bg(Color::DarkGray),
+                            }
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                    Span::raw(" "),
+                    hint,
+                ])
+            },
         ];
 
         match form.monitor_type {
@@ -1595,7 +1647,11 @@ impl NetworkMonitorTui {
                     ]),
                     Line::from(vec![
                         Span::styled("←/→/Space", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Change monitor type"),
+                        Span::raw(" - Change monitor type/credential"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("x", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Clear credential selection"),
                     ]),
                     Line::from(vec![
                         Span::styled("Enter", Style::default().fg(Color::Yellow)),
@@ -1880,13 +1936,15 @@ impl NetworkMonitorTui {
                 self.toggle_monitoring();
             }
             KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.reload_credentials();
                 self.node_form = NodeForm::default();
                 self.state = AppState::AddNode;
             }
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 if let Some(selected) = self.table_state.selected() {
                     if let Some(node) = self.nodes.get(selected) {
-                        self.node_form = NodeForm::from_node(node);
+                        self.reload_credentials();
+                        self.node_form = self.node_form_from_node(node);
                         self.editing_node_id = node.id;
                         self.state = AppState::EditNode;
                     }
@@ -1996,6 +2054,10 @@ impl NetworkMonitorTui {
                 // Handle arrow keys for Monitor Type field
                 if self.node_form.current_field == 2 {
                     self.cycle_monitor_type(key == KeyCode::Right);
+                }
+                // Handle arrow keys for Credential field
+                else if self.node_form.current_field == 3 {
+                    self.cycle_credential(key == KeyCode::Right);
                 }
             }
             KeyCode::Char('?') => {
@@ -2392,6 +2454,73 @@ impl NetworkMonitorTui {
                 MonitorTypeForm::Ping => MonitorTypeForm::Http,
             }
         };
+        // Reset credential selection when monitor type changes
+        self.node_form.credential_index = None;
+        self.node_form.credential_id = None;
+    }
+
+    fn get_compatible_credentials(&self) -> Vec<&CredentialSummary> {
+        // HTTP monitors don't use credentials
+        // Ping and TCP monitors use SSH credentials for interactive connections
+        match self.node_form.monitor_type {
+            MonitorTypeForm::Http => vec![], // No credentials for HTTP
+            MonitorTypeForm::Ping | MonitorTypeForm::Tcp => {
+                // All current credentials are SSH credentials, so return all
+                self.credentials.iter().collect()
+            }
+        }
+    }
+
+    fn cycle_credential(&mut self, forward: bool) {
+        let compatible_creds = self.get_compatible_credentials();
+
+        // If no compatible credentials, do nothing
+        if compatible_creds.is_empty() {
+            return;
+        }
+
+        let new_index = match self.node_form.credential_index {
+            None => {
+                // Currently "None" selected
+                if forward {
+                    Some(0) // Move to first credential
+                } else {
+                    Some(compatible_creds.len() - 1) // Move to last credential
+                }
+            }
+            Some(current_idx) => {
+                if forward {
+                    if current_idx >= compatible_creds.len() - 1 {
+                        None // Wrap around to "None"
+                    } else {
+                        Some(current_idx + 1)
+                    }
+                } else {
+                    if current_idx == 0 {
+                        None // Wrap around to "None"
+                    } else {
+                        Some(current_idx - 1)
+                    }
+                }
+            }
+        };
+
+        self.node_form.credential_index = new_index;
+        self.node_form.credential_id = new_index.map(|idx| compatible_creds[idx].id.clone());
+    }
+
+    fn node_form_from_node(&self, node: &Node) -> NodeForm {
+        let mut form = NodeForm::from_node(node);
+
+        // Set credential_index based on credential_id
+        if let Some(ref cred_id) = node.credential_id {
+            let compatible_creds = self.credentials.iter().collect::<Vec<_>>();
+            form.credential_index = compatible_creds.iter().position(|c| &c.id == cred_id);
+        } else {
+            form.credential_index = None;
+        }
+
+        form
     }
 
     fn add_char_to_form_field(&mut self, c: char) {
@@ -2405,7 +2534,17 @@ impl NetworkMonitorTui {
                     self.cycle_monitor_type(true);
                 }
             }
-            3 => {} // Credential selection - would need dropdown
+            3 => {
+                // Credential selection
+                if c == ' ' {
+                    // Space cycles forward through credentials
+                    self.cycle_credential(true);
+                } else if c == 'x' || c == 'X' {
+                    // 'x' clears credential selection
+                    self.node_form.credential_index = None;
+                    self.node_form.credential_id = None;
+                }
+            }
             4 => match self.node_form.monitor_type {
                 MonitorTypeForm::Http => self.node_form.http_url.push(c),
                 MonitorTypeForm::Ping => self.node_form.ping_host.push(c),
