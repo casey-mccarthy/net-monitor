@@ -79,6 +79,64 @@ cargo audit
 
 Note: The project uses `.cargo/audit.toml` to ignore known vulnerabilities that have no current fix available.
 
+## Code Coverage
+
+This project uses `cargo-llvm-cov` for code coverage analysis.
+
+### Install cargo-llvm-cov
+```bash
+cargo install cargo-llvm-cov
+```
+
+### Generate Coverage Report (HTML)
+```bash
+cargo llvm-cov --html --open
+```
+
+This generates an HTML report in `target/llvm-cov/html/` and opens it in your browser.
+
+### Generate Coverage Report (Terminal)
+```bash
+cargo llvm-cov
+```
+
+### Generate Coverage with All Features (Excludes Network Tests)
+```bash
+cargo llvm-cov
+```
+
+**Note:** By default, coverage excludes network tests (same as regular test runs).
+
+### Generate Coverage with Network Tests (Local Development Only)
+```bash
+cargo llvm-cov --features network-tests
+```
+
+**Important:** Only run with network tests locally, not in CI.
+
+### Generate Coverage for CI (LCOV Format)
+```bash
+cargo llvm-cov --lcov --output-path coverage.lcov
+```
+
+This generates a `coverage.lcov` file suitable for upload to coverage services like Codecov.
+
+### Generate Coverage with No Dead Code Warnings
+```bash
+RUSTFLAGS="-A dead_code" cargo llvm-cov --html --open
+```
+
+### Clean Coverage Data
+```bash
+cargo llvm-cov clean
+```
+
+**Coverage Tips:**
+- Coverage reports are excluded from git via `.gitignore`
+- The CI workflow automatically generates coverage reports on every push
+- Focus on covering critical paths: credential management, node operations, connection logic
+- Some GUI/TUI code may be difficult to cover with unit tests - that's okay
+
 ## Development Workflow
 
 When making changes:
