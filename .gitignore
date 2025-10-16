@@ -18,3 +18,11 @@ Cargo.lock
 
 /target
 .DS_Store
+
+# Code coverage output
+coverage/
+*.profraw
+*.profdata
+coverage.lcov
+lcov.info
+cobertura.xml
