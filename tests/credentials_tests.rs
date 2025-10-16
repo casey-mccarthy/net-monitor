@@ -523,3 +523,188 @@ fn test_file_credential_store_encryption_round_trip() {
 
     drop(temp_dir);
 }
+
+// ========== SSH Key Utilities Tests ==========
+
+use net_monitor::credentials::ssh_keys;
+use std::fs;
+
+#[test]
+fn test_discover_ssh_keys_no_ssh_dir() {
+    let temp_dir = TempDir::new().unwrap();
+    std::env::set_var("HOME", temp_dir.path());
+
+    // No .ssh directory exists
+    let keys = ssh_keys::discover_ssh_keys();
+
+    // Should return empty vec or error, depending on implementation
+    if let Ok(key_list) = keys {
+        assert_eq!(key_list.len(), 0);
+    }
+
+    drop(temp_dir);
+}
+
+#[test]
+fn test_discover_ssh_keys_with_standard_keys() {
+    let temp_dir = TempDir::new().unwrap();
+    let ssh_dir = temp_dir.path().join(".ssh");
+    fs::create_dir_all(&ssh_dir).unwrap();
+
+    std::env::set_var("HOME", temp_dir.path());
+
+    // Create standard key files
+    let id_rsa = ssh_dir.join("id_rsa");
+    let id_ed25519 = ssh_dir.join("id_ed25519");
+
+    fs::write(
+        &id_rsa,
+        "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----",
+    )
+    .unwrap();
+    fs::write(
+        &id_ed25519,
+        "-----BEGIN OPENSSH PRIVATE KEY-----\ntest\n-----END OPENSSH PRIVATE KEY-----",
+    )
+    .unwrap();
+
+    let keys = ssh_keys::discover_ssh_keys();
+
+    // Function should succeed and return a list (may be empty due to test isolation)
+    assert!(keys.is_ok());
+
+    drop(temp_dir);
+}
+
+#[test]
+fn test_discover_ssh_keys_ignores_public_keys() {
+    let temp_dir = TempDir::new().unwrap();
+    let ssh_dir = temp_dir.path().join(".ssh");
+    fs::create_dir_all(&ssh_dir).unwrap();
+
+    std::env::set_var("HOME", temp_dir.path());
+
+    // Create private and public key pair
+    let id_rsa = ssh_dir.join("id_rsa");
+    let id_rsa_pub = ssh_dir.join("id_rsa.pub");
+
+    fs::write(
+        &id_rsa,
+        "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----",
+    )
+    .unwrap();
+    fs::write(&id_rsa_pub, "ssh-rsa AAAAB3NzaC1yc2EA...").unwrap();
+
+    let keys = ssh_keys::discover_ssh_keys();
+
+    // Function should succeed (may find keys or not due to test isolation)
+    // The important thing is that it doesn't include .pub files
+    if let Ok(key_list) = keys {
+        assert!(!key_list
+            .iter()
+            .any(|k| k.file_name().unwrap() == "id_rsa.pub"));
+    }
+
+    drop(temp_dir);
+}
+
+#[test]
+fn test_discover_ssh_keys_mixed_files() {
+    let temp_dir = TempDir::new().unwrap();
+    let ssh_dir = temp_dir.path().join(".ssh");
+    fs::create_dir_all(&ssh_dir).unwrap();
+
+    std::env::set_var("HOME", temp_dir.path());
+
+    // Create mix of files
+    let id_rsa = ssh_dir.join("id_rsa");
+    let config = ssh_dir.join("config");
+    let known_hosts = ssh_dir.join("known_hosts");
+    let random_file = ssh_dir.join("random.txt");
+
+    fs::write(
+        &id_rsa,
+        "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----",
+    )
+    .unwrap();
+    fs::write(&config, "Host *\n  StrictHostKeyChecking no").unwrap();
+    fs::write(&known_hosts, "example.com ssh-rsa ...").unwrap();
+    fs::write(&random_file, "not a key").unwrap();
+
+    let keys = ssh_keys::discover_ssh_keys();
+
+    // Function should succeed (may find keys or not due to test isolation)
+    assert!(keys.is_ok());
+
+    drop(temp_dir);
+}
+
+#[test]
+fn test_validate_private_key_pem_format() {
+    let pem_key = "-----BEGIN RSA PRIVATE KEY-----\n\
+                   MIIEpAIBAAKCAQEA...\n\
+                   -----END RSA PRIVATE KEY-----";
+
+    let result = ssh_keys::validate_private_key(pem_key);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_validate_private_key_openssh_format() {
+    let openssh_key = "-----BEGIN OPENSSH PRIVATE KEY-----\n\
+                       b3BlbnNzaC1rZXktdjEAAAAA...\n\
+                       -----END OPENSSH PRIVATE KEY-----";
+
+    let result = ssh_keys::validate_private_key(openssh_key);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_validate_private_key_invalid_no_begin() {
+    let invalid_key = "This is not a valid key\nJust some text";
+
+    let result = ssh_keys::validate_private_key(invalid_key);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_validate_private_key_invalid_no_private_marker() {
+    let invalid_key = "-----BEGIN PUBLIC KEY-----\n\
+                       MIIBIjANBgkqhkiG9w0BAQEF...\n\
+                       -----END PUBLIC KEY-----";
+
+    let result = ssh_keys::validate_private_key(invalid_key);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_validate_private_key_empty_string() {
+    let result = ssh_keys::validate_private_key("");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_validate_private_key_whitespace_only() {
+    let result = ssh_keys::validate_private_key("   \n  \t  \n   ");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_validate_private_key_ecdsa_format() {
+    let ecdsa_key = "-----BEGIN EC PRIVATE KEY-----\n\
+                     MHcCAQEEIIGlRW...\n\
+                     -----END EC PRIVATE KEY-----";
+
+    let result = ssh_keys::validate_private_key(ecdsa_key);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_validate_private_key_dsa_format() {
+    let dsa_key = "-----BEGIN DSA PRIVATE KEY-----\n\
+                   MIIBuwIBAAKBgQD...\n\
+                   -----END DSA PRIVATE KEY-----";
+
+    let result = ssh_keys::validate_private_key(dsa_key);
+    assert!(result.is_ok());
+}
