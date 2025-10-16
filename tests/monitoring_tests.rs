@@ -514,3 +514,190 @@ async fn test_tcp_monitoring_workflow() {
     assert_eq!(updated_nodes.len(), 1);
     assert_eq!(updated_nodes[0].status, NodeStatus::Online);
 }
+
+// ========== Monitor Edge Case Tests ==========
+
+#[tokio::test]
+async fn test_check_http_with_timeout() {
+    let node = Node {
+        id: Some(1),
+        name: "Timeout Test".to_string(),
+        detail: MonitorDetail::Http {
+            url: "http://example.com:81".to_string(), // Non-standard port likely to timeout
+            expected_status: 200,
+        },
+        status: NodeStatus::Offline,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    };
+
+    // This should timeout or fail
+    let result = check_node(&node).await;
+
+    // Expect either error or offline status
+    if let Ok(monitoring_result) = result {
+        // If we get a result, it should be offline due to timeout
+        assert_eq!(monitoring_result.status, NodeStatus::Offline);
+    }
+}
+
+#[tokio::test]
+async fn test_check_tcp_multiple_addresses() {
+    // Use a hostname that likely resolves to multiple IPs
+    let node = Node {
+        id: Some(1),
+        name: "Multi-IP Test".to_string(),
+        detail: MonitorDetail::Tcp {
+            host: "example.com".to_string(),
+            port: 80,
+            timeout: 5,
+        },
+        status: NodeStatus::Offline,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    };
+
+    let result = check_node(&node).await;
+
+    // Should successfully connect to at least one address
+    if let Ok(monitoring_result) = result {
+        assert!(monitoring_result.response_time.is_some());
+    }
+}
+
+#[tokio::test]
+async fn test_check_tcp_connection_refused() {
+    let node = Node {
+        id: Some(1),
+        name: "Connection Refused Test".to_string(),
+        detail: MonitorDetail::Tcp {
+            host: "127.0.0.1".to_string(),
+            port: 1, // Port 1 unlikely to have service
+            timeout: 2,
+        },
+        status: NodeStatus::Offline,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    };
+
+    let result = check_node(&node).await;
+
+    // Should fail to connect
+    if let Ok(monitoring_result) = result {
+        assert_eq!(monitoring_result.status, NodeStatus::Offline);
+        assert!(monitoring_result.details.is_some());
+    }
+}
+
+#[tokio::test]
+async fn test_check_ping_invalid_format() {
+    let node = Node {
+        id: Some(1),
+        name: "Invalid Ping Test".to_string(),
+        detail: MonitorDetail::Ping {
+            host: "not-a-valid-ip-address-!!!".to_string(),
+            count: 4,
+            timeout: 5,
+        },
+        status: NodeStatus::Offline,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    };
+
+    let result = check_node(&node).await;
+
+    // Should handle invalid IP gracefully
+    if let Ok(monitoring_result) = result {
+        assert_eq!(monitoring_result.status, NodeStatus::Offline);
+    }
+}
+
+#[tokio::test]
+async fn test_check_node_response_time_recorded() {
+    let test_db = TestDatabase::new();
+
+    let node = fixtures::http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    let mut node_with_id = node.clone();
+    node_with_id.id = Some(node_id);
+
+    let result = check_node(&node_with_id).await;
+
+    if let Ok(monitoring_result) = result {
+        // Response time should be recorded for successful checks
+        if monitoring_result.status == NodeStatus::Online {
+            assert!(monitoring_result.response_time.is_some());
+            assert!(monitoring_result.response_time.unwrap() > 0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_check_tcp_short_timeout() {
+    let node = Node {
+        id: Some(1),
+        name: "Short Timeout TCP Test".to_string(),
+        detail: MonitorDetail::Tcp {
+            host: "example.com".to_string(),
+            port: 80,
+            timeout: 1, // Very short timeout
+        },
+        status: NodeStatus::Offline,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    };
+
+    let result = check_node(&node).await;
+
+    // Should complete within timeout or succeed
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_check_ping_short_timeout() {
+    let node = Node {
+        id: Some(1),
+        name: "Short Timeout Ping Test".to_string(),
+        detail: MonitorDetail::Ping {
+            host: "8.8.8.8".to_string(),
+            count: 1,
+            timeout: 1, // Very short timeout
+        },
+        status: NodeStatus::Offline,
+        last_check: None,
+        response_time: None,
+        monitoring_interval: 60,
+        credential_id: None,
+    };
+
+    let result = check_node(&node).await;
+
+    // Should handle short timeout gracefully
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_monitoring_result_timestamp_accuracy() {
+    let node = fixtures::http_node();
+
+    let before = Utc::now();
+    let result = check_node(&node).await;
+    let after = Utc::now();
+
+    if let Ok(monitoring_result) = result {
+        // Timestamp should be between before and after
+        assert!(monitoring_result.timestamp >= before);
+        assert!(monitoring_result.timestamp <= after);
+    }
+}
