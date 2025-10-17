@@ -197,6 +197,8 @@ mod state_transition_tests {
         let tui_result = NetworkMonitorTui::new(database);
         if tui_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
         let tui = tui_result.unwrap();
 
