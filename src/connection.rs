@@ -1,3 +1,9 @@
+//! Connection strategies for different monitor types.
+//!
+//! This module implements the Strategy pattern for connecting to monitored nodes.
+//! **Note:** Only SSH-based connections (SSH, Ping, TCP) support credential-based authentication.
+//! HTTP/HTTPS targets will always open in the default web browser without credential handling.
+
 use crate::credentials::{CredentialStore, SshCredential};
 use anyhow::{anyhow, Result};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -24,7 +30,12 @@ pub trait AuthenticatedConnectionStrategy: ConnectionStrategy {
     fn test_connection(&self, target: &str, credential: Option<&SshCredential>) -> Result<bool>;
 }
 
-/// HTTP connection strategy - opens URLs in the default web browser
+/// HTTP connection strategy - opens URLs in the default web browser.
+///
+/// **Note:** HTTP/HTTPS connections do not support credentials. This strategy
+/// will always open the URL in the system's default browser without any
+/// credential handling. For authenticated access, credentials should be
+/// managed through the browser's built-in authentication mechanisms.
 pub struct HttpConnectionStrategy;
 
 impl ConnectionStrategy for HttpConnectionStrategy {

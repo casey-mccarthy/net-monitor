@@ -531,31 +531,45 @@ impl NetworkMonitorApp {
                 });
             ui.end_row();
 
-            ui.label("SSH Credential:");
-            let selected_text = if let Some(ref cred_id) = form.credential_id {
-                // Find the credential name by ID
-                self.credentials
-                    .iter()
-                    .find(|c| c.id.to_string().as_str() == cred_id)
-                    .map(|c| c.name.clone())
-                    .unwrap_or_else(|| cred_id.clone())
-            } else {
-                "None (Use default SSH)".to_string()
-            };
-            egui::ComboBox::from_id_salt("credential_combo")
-                .selected_text(selected_text)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut form.credential_id, None, "None (Use default SSH)");
-                    for credential in &self.credentials {
-                        let cred_id_str = credential.id.to_string();
-                        ui.selectable_value(
-                            &mut form.credential_id,
-                            Some(cred_id_str.clone()),
-                            &credential.name,
-                        );
-                    }
-                });
-            ui.end_row();
+            // Only show credential selector for SSH-based connections (Ping and TCP)
+            // HTTP/HTTPS targets don't support credentials
+            match form.monitor_type {
+                MonitorTypeForm::Http => {
+                    // Clear any credentials if HTTP is selected
+                    form.credential_id = None;
+                }
+                MonitorTypeForm::Ping | MonitorTypeForm::Tcp => {
+                    ui.label("SSH Credential:");
+                    let selected_text = if let Some(ref cred_id) = form.credential_id {
+                        // Find the credential name by ID
+                        self.credentials
+                            .iter()
+                            .find(|c| c.id.to_string().as_str() == cred_id)
+                            .map(|c| c.name.clone())
+                            .unwrap_or_else(|| cred_id.clone())
+                    } else {
+                        "None (Use default SSH)".to_string()
+                    };
+                    egui::ComboBox::from_id_salt("credential_combo")
+                        .selected_text(selected_text)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut form.credential_id,
+                                None,
+                                "None (Use default SSH)",
+                            );
+                            for credential in &self.credentials {
+                                let cred_id_str = credential.id.to_string();
+                                ui.selectable_value(
+                                    &mut form.credential_id,
+                                    Some(cred_id_str.clone()),
+                                    &credential.name,
+                                );
+                            }
+                        });
+                    ui.end_row();
+                }
+            }
 
             match form.monitor_type {
                 MonitorTypeForm::Http => {
