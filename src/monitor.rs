@@ -84,6 +84,68 @@ pub fn normalize_http_url(url: &str) -> String {
     }
 }
 
+async fn check_ping(host: &str, timeout: u64) -> Result<String> {
+    info!("Checking Ping for {}", host);
+    let addr = host
+        .parse::<std::net::IpAddr>()
+        .context("Invalid IP address")?;
+
+    // Use the `ping` function which is simpler and matches the older API.
+    // The `count` parameter is not supported in this version's `ping` function.
+    match ping::ping(
+        addr,
+        Some(Duration::from_secs(timeout)),
+        None,
+        None,
+        None,
+        None,
+    ) {
+        Ok(_) => Ok("Ping successful".to_string()),
+        Err(e) => Err(anyhow!("Ping failed: {}", e)),
+    }
+}
+
+async fn check_tcp(host: &str, port: u16, timeout: u64) -> Result<String> {
+    info!("Checking TCP connection to {}:{}", host, port);
+
+    // Format the address and resolve DNS
+    let addr_str = format!("{}:{}", host, port);
+    let socket_addrs: Vec<_> = addr_str
+        .to_socket_addrs()
+        .context(format!("Failed to resolve hostname: {}", host))?
+        .collect();
+
+    if socket_addrs.is_empty() {
+        return Err(anyhow!("No addresses found for {}:{}", host, port));
+    }
+
+    // Try connecting to each resolved address
+    let timeout_duration = Duration::from_secs(timeout);
+    let mut last_error = None;
+
+    for socket_addr in socket_addrs {
+        match TcpStream::connect_timeout(&socket_addr, timeout_duration) {
+            Ok(_stream) => {
+                return Ok(format!(
+                    "TCP connection successful to {}:{} ({})",
+                    host, port, socket_addr
+                ));
+            }
+            Err(e) => {
+                last_error = Some(e);
+                continue;
+            }
+        }
+    }
+
+    // If we get here, all connection attempts failed
+    if let Some(err) = last_error {
+        Err(anyhow!("Failed to connect to {}:{} - {}", host, port, err))
+    } else {
+        Err(anyhow!("Failed to connect to {}:{}", host, port))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,67 +225,5 @@ mod tests {
             normalize_http_url("http://192.168.1.100:8080"),
             "http://192.168.1.100:8080"
         );
-    }
-}
-
-async fn check_ping(host: &str, timeout: u64) -> Result<String> {
-    info!("Checking Ping for {}", host);
-    let addr = host
-        .parse::<std::net::IpAddr>()
-        .context("Invalid IP address")?;
-
-    // Use the `ping` function which is simpler and matches the older API.
-    // The `count` parameter is not supported in this version's `ping` function.
-    match ping::ping(
-        addr,
-        Some(Duration::from_secs(timeout)),
-        None,
-        None,
-        None,
-        None,
-    ) {
-        Ok(_) => Ok("Ping successful".to_string()),
-        Err(e) => Err(anyhow!("Ping failed: {}", e)),
-    }
-}
-
-async fn check_tcp(host: &str, port: u16, timeout: u64) -> Result<String> {
-    info!("Checking TCP connection to {}:{}", host, port);
-
-    // Format the address and resolve DNS
-    let addr_str = format!("{}:{}", host, port);
-    let socket_addrs: Vec<_> = addr_str
-        .to_socket_addrs()
-        .context(format!("Failed to resolve hostname: {}", host))?
-        .collect();
-
-    if socket_addrs.is_empty() {
-        return Err(anyhow!("No addresses found for {}:{}", host, port));
-    }
-
-    // Try connecting to each resolved address
-    let timeout_duration = Duration::from_secs(timeout);
-    let mut last_error = None;
-
-    for socket_addr in socket_addrs {
-        match TcpStream::connect_timeout(&socket_addr, timeout_duration) {
-            Ok(_stream) => {
-                return Ok(format!(
-                    "TCP connection successful to {}:{} ({})",
-                    host, port, socket_addr
-                ));
-            }
-            Err(e) => {
-                last_error = Some(e);
-                continue;
-            }
-        }
-    }
-
-    // If we get here, all connection attempts failed
-    if let Some(err) = last_error {
-        Err(anyhow!("Failed to connect to {}:{} - {}", host, port, err))
-    } else {
-        Err(anyhow!("Failed to connect to {}:{}", host, port))
     }
 }
