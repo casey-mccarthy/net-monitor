@@ -86,6 +86,8 @@ fn test_database_integration() {
     let tui_result = NetworkMonitorTui::new(database);
     if tui_result.is_err() {
         // Skip if credential store initialization fails
+        #[allow(clippy::needless_return)]
+        return;
     }
     let tui = tui_result.unwrap();
     // TUI should have loaded the node (we can't directly access private fields,
@@ -120,6 +122,8 @@ fn test_monitoring_lifecycle() {
     let tui_result = NetworkMonitorTui::new(database);
     if tui_result.is_err() {
         // Skip if credential store initialization fails
+        #[allow(clippy::needless_return)]
+        return;
     }
     let tui = tui_result.unwrap();
 
