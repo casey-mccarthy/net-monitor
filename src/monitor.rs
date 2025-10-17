@@ -48,6 +48,10 @@ pub async fn check_node(node: &Node) -> Result<MonitoringResult> {
 async fn check_http(url: &str, expected_status: u16) -> Result<String> {
     info!("Checking HTTP for {}", url);
 
+    // Normalize the URL to ensure it has a proper scheme
+    let normalized_url = normalize_http_url(url);
+    info!("Normalized URL: {}", normalized_url);
+
     // Build client that accepts self-signed certificates
     // This is necessary for monitoring internal services (e.g., Proxmox on private IPs)
     let client = reqwest::Client::builder()
@@ -55,7 +59,7 @@ async fn check_http(url: &str, expected_status: u16) -> Result<String> {
         .timeout(Duration::from_secs(30))
         .build()?;
 
-    let res = client.get(url).send().await?;
+    let res = client.get(&normalized_url).send().await?;
     let status = res.status();
     if status.as_u16() == expected_status {
         Ok(format!("Responded with status {}", status))
@@ -65,6 +69,100 @@ async fn check_http(url: &str, expected_status: u16) -> Result<String> {
             expected_status,
             status
         ))
+    }
+}
+
+/// Normalize HTTP URL to ensure it has a proper scheme
+/// Supports both HTTP and HTTPS, and preserves port numbers
+pub fn normalize_http_url(url: &str) -> String {
+    // If the URL already has a scheme, use it as-is
+    if url.starts_with("http://") || url.starts_with("https://") {
+        url.to_string()
+    } else {
+        // Default to HTTPS if no scheme is specified
+        format!("https://{}", url)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_http_url_with_https() {
+        assert_eq!(
+            normalize_http_url("https://example.com"),
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn test_normalize_http_url_with_http() {
+        assert_eq!(
+            normalize_http_url("http://example.com"),
+            "http://example.com"
+        );
+    }
+
+    #[test]
+    fn test_normalize_http_url_without_scheme() {
+        assert_eq!(normalize_http_url("example.com"), "https://example.com");
+    }
+
+    #[test]
+    fn test_normalize_http_url_with_port_https() {
+        assert_eq!(
+            normalize_http_url("https://example.com:8006"),
+            "https://example.com:8006"
+        );
+    }
+
+    #[test]
+    fn test_normalize_http_url_with_port_http() {
+        assert_eq!(
+            normalize_http_url("http://example.com:8123"),
+            "http://example.com:8123"
+        );
+    }
+
+    #[test]
+    fn test_normalize_http_url_with_port_no_scheme() {
+        assert_eq!(
+            normalize_http_url("example.com:8006"),
+            "https://example.com:8006"
+        );
+    }
+
+    #[test]
+    fn test_normalize_http_url_proxmox_example() {
+        assert_eq!(
+            normalize_http_url("proxmox.local:8006"),
+            "https://proxmox.local:8006"
+        );
+    }
+
+    #[test]
+    fn test_normalize_http_url_homeassistant_example() {
+        assert_eq!(
+            normalize_http_url("homeassistant:8123"),
+            "https://homeassistant:8123"
+        );
+    }
+
+    #[test]
+    fn test_normalize_http_url_ip_with_port() {
+        assert_eq!(
+            normalize_http_url("192.168.1.100:8080"),
+            "https://192.168.1.100:8080"
+        );
+    }
+
+    #[test]
+    fn test_normalize_http_url_http_ip_with_port() {
+        assert_eq!(
+            normalize_http_url("http://192.168.1.100:8080"),
+            "http://192.168.1.100:8080"
+        );
     }
 }
 
