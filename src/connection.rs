@@ -31,11 +31,13 @@ impl ConnectionStrategy for HttpConnectionStrategy {
     fn connect(&self, target: &str) -> Result<()> {
         info!("Opening URL in browser: {}", target);
 
-        // Ensure the URL has a scheme
-        let url = if !target.starts_with("http://") && !target.starts_with("https://") {
-            format!("https://{}", target)
-        } else {
+        // Normalize the URL to ensure it has a proper scheme
+        // Supports both HTTP and HTTPS, and preserves port numbers
+        let url = if target.starts_with("http://") || target.starts_with("https://") {
             target.to_string()
+        } else {
+            // Default to HTTPS if no scheme is specified
+            format!("https://{}", target)
         };
 
         open::that(&url).map_err(|e| {
