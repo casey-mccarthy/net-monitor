@@ -97,13 +97,24 @@ impl SshConnectionStrategy {
         (target.to_string(), 22)
     }
 
+    /// Check if sshpass is available on the system
+    fn check_sshpass_available(&self) -> bool {
+        Command::new("which")
+            .arg("sshpass")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
     /// Build SSH command with credentials
     fn build_ssh_command(
         &self,
         host: &str,
         port: u16,
         credential: Option<&SshCredential>,
-    ) -> Vec<String> {
+    ) -> Result<Vec<String>> {
         let mut command = Vec::new();
 
         match credential {
@@ -116,9 +127,23 @@ impl SshConnectionStrategy {
                 }
                 command.push(host.to_string());
             }
-            Some(SshCredential::Password { username, .. }) => {
-                // For password auth, we'll use ssh with username
+            Some(SshCredential::Password { username, password }) => {
+                // For password auth, use sshpass to pass the password securely
+                if !self.check_sshpass_available() {
+                    return Err(anyhow!(
+                        "sshpass is required for password authentication but not found. \
+                        Install it with: brew install sshpass (macOS), \
+                        apt-get install sshpass (Ubuntu/Debian), or \
+                        yum install sshpass (RHEL/CentOS)"
+                    ));
+                }
+
+                command.push("sshpass".to_string());
+                command.push("-p".to_string());
+                command.push(password.as_str().to_string());
                 command.push("ssh".to_string());
+                command.push("-o".to_string());
+                command.push("StrictHostKeyChecking=no".to_string());
                 if port != 22 {
                     command.push("-p".to_string());
                     command.push(port.to_string());
@@ -161,7 +186,7 @@ impl SshConnectionStrategy {
             }
         }
 
-        command
+        Ok(command)
     }
 
     /// Test TCP connection to SSH port
@@ -202,7 +227,7 @@ impl AuthenticatedConnectionStrategy for SshConnectionStrategy {
             host, port
         );
 
-        let ssh_command_vec = self.build_ssh_command(&host, port, Some(credential));
+        let ssh_command_vec = self.build_ssh_command(&host, port, Some(credential))?;
         let ssh_command_str = ssh_command_vec.join(" ");
 
         #[cfg(target_os = "macos")]
