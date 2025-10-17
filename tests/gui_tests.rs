@@ -97,7 +97,7 @@ mod credential_validation_tests {
 
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
         // The validation logic should reject empty names
     }
@@ -111,7 +111,7 @@ mod credential_validation_tests {
 
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
         // The validation should check for both fields
     }
@@ -125,7 +125,7 @@ mod credential_validation_tests {
 
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
         // The validation should check for both fields
     }
@@ -143,7 +143,7 @@ mod node_action_tests {
 
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // Node creation involves:
@@ -179,7 +179,7 @@ mod node_action_tests {
 
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // Edit flow involves:
@@ -216,7 +216,7 @@ mod node_action_tests {
 
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // Delete flow involves:
@@ -239,7 +239,7 @@ mod window_state_tests {
 
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // Initial state should have:
@@ -255,7 +255,7 @@ mod window_state_tests {
 
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // When show_add_credential is true:
@@ -277,7 +277,7 @@ mod import_export_tests {
 
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // Import functionality should:
@@ -295,7 +295,7 @@ mod import_export_tests {
 
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // Export functionality should:
@@ -318,7 +318,7 @@ mod credential_integration_tests {
 
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // Should support:
@@ -337,7 +337,7 @@ mod credential_integration_tests {
         // The GUI app initializes the credential store internally
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // If we got here, credential store initialization worked

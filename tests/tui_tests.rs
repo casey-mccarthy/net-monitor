@@ -29,7 +29,7 @@ fn test_credential_form_field_count() {
 
     let tui_result = NetworkMonitorTui::new(database);
     if tui_result.is_err() {
-        return; // Skip if credential store initialization fails
+        // Skip if credential store initialization fails
     }
 
     // Note: We cannot directly access private fields, but we can verify the implementation
@@ -85,7 +85,7 @@ fn test_database_integration() {
     // Verify the TUI can load nodes
     let tui_result = NetworkMonitorTui::new(database);
     if tui_result.is_err() {
-        return; // Skip if credential store initialization fails
+        // Skip if credential store initialization fails
     }
     let tui = tui_result.unwrap();
     // TUI should have loaded the node (we can't directly access private fields,
@@ -102,7 +102,7 @@ fn test_node_form_validation() {
 
     let tui_result = NetworkMonitorTui::new(database);
     if tui_result.is_err() {
-        return; // Skip if credential store initialization fails
+        // Skip if credential store initialization fails
     }
 
     // Node forms should validate:
@@ -119,7 +119,7 @@ fn test_monitoring_lifecycle() {
 
     let tui_result = NetworkMonitorTui::new(database);
     if tui_result.is_err() {
-        return; // Skip if credential store initialization fails
+        // Skip if credential store initialization fails
     }
     let tui = tui_result.unwrap();
 
@@ -143,7 +143,7 @@ mod credential_form_tests {
 
         let tui_result = NetworkMonitorTui::new(database);
         if tui_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // The form should reject empty names when saving
@@ -158,7 +158,7 @@ mod credential_form_tests {
 
         let tui_result = NetworkMonitorTui::new(database);
         if tui_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // The form should validate these fields when saving
@@ -173,7 +173,7 @@ mod credential_form_tests {
 
         let tui_result = NetworkMonitorTui::new(database);
         if tui_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // The form should validate these fields when saving
@@ -192,7 +192,7 @@ mod state_transition_tests {
 
         let tui_result = NetworkMonitorTui::new(database);
         if tui_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
         let tui = tui_result.unwrap();
 
@@ -209,7 +209,7 @@ mod state_transition_tests {
 
         let tui_result = NetworkMonitorTui::new(database);
         if tui_result.is_err() {
-            return; // Skip if credential store initialization fails
+            // Skip if credential store initialization fails
         }
 
         // The handle_credentials_input function should handle 'a' key to add credentials
