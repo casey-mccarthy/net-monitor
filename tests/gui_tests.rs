@@ -98,6 +98,8 @@ mod credential_validation_tests {
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
         // The validation logic should reject empty names
     }
@@ -112,6 +114,8 @@ mod credential_validation_tests {
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
         // The validation should check for both fields
     }
@@ -126,6 +130,8 @@ mod credential_validation_tests {
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
         // The validation should check for both fields
     }
@@ -144,6 +150,8 @@ mod node_action_tests {
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
 
         // Node creation involves:
@@ -180,6 +188,8 @@ mod node_action_tests {
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
 
         // Edit flow involves:
@@ -217,6 +227,8 @@ mod node_action_tests {
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
 
         // Delete flow involves:
@@ -240,6 +252,8 @@ mod window_state_tests {
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
 
         // Initial state should have:
@@ -256,6 +270,8 @@ mod window_state_tests {
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
 
         // When show_add_credential is true:
@@ -278,6 +294,8 @@ mod import_export_tests {
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
 
         // Import functionality should:
@@ -296,6 +314,8 @@ mod import_export_tests {
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
 
         // Export functionality should:
@@ -319,6 +339,8 @@ mod credential_integration_tests {
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
 
         // Should support:
@@ -338,6 +360,8 @@ mod credential_integration_tests {
         let app_result = NetworkMonitorApp::new(database);
         if app_result.is_err() {
             // Skip if credential store initialization fails
+            #[allow(clippy::needless_return)]
+            return;
         }
 
         // If we got here, credential store initialization worked
