@@ -295,6 +295,145 @@ git push origin feature/branch-name --force-with-lease
 | New feature, refactor, breaking change | Feature branch + rebase + PR | Allows review, testing, discussion |
 | Hotfix for production issue | Feature branch + rebase + PR | Document the fix, maintain history |
 
+## Working with GitHub Issues
+
+When working on GitHub issues, follow this workflow to keep issue status up-to-date:
+
+### 1. Check Issue Status Before Starting
+
+Before starting work on an issue, check its current status:
+
+```bash
+# View issue details
+gh issue view <issue-number>
+
+# List all open issues
+gh issue list
+```
+
+### 2. Update Issue to "In Progress" When Starting Work
+
+**IMPORTANT:** As soon as you start working on an issue, update its status to "In Progress":
+
+```bash
+# Mark issue as in progress
+gh issue edit <issue-number> --add-label "in progress"
+```
+
+Or if your repository uses GitHub Projects:
+
+```bash
+# Update issue status in project (if applicable)
+gh issue edit <issue-number> --add-field "Status=In Progress"
+```
+
+### 3. Reference Issue in Branch Name and Commits
+
+Create a branch that references the issue number:
+
+```bash
+# Good branch names
+git checkout -b feat/123-add-feature
+git checkout -b fix/456-bug-description
+```
+
+Reference the issue in your commit messages:
+
+```bash
+git commit -m "feat: add new feature
+
+Implements the feature requested in #123
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+### 4. Link PR to Issue
+
+When creating the pull request, link it to the issue using keywords in the PR description:
+
+```bash
+gh pr create --title "feat: add new feature" --body "Closes #123
+
+## Summary
+Implementation of new feature as requested.
+
+..."
+```
+
+**Linking Keywords:**
+- `Closes #123` - Links and will auto-close issue when PR merges
+- `Fixes #123` - Same as Closes
+- `Resolves #123` - Same as Closes
+- `Relates to #123` - Links but doesn't auto-close
+
+### 5. Issue Closure
+
+**Do NOT manually close issues.** GitHub Actions will automatically close issues when the linked PR is merged to main.
+
+### Complete Workflow Example
+
+```bash
+# 1. Start working on issue #123
+gh issue view 123
+gh issue edit 123 --add-label "in progress"
+
+# 2. Create feature branch
+git checkout -b feat/123-awesome-feature
+
+# 3. Make changes and commit
+git add .
+git commit -m "feat: implement awesome feature
+
+Implements #123
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+
+# 4. Run pre-push checks
+cargo fmt && \
+(git diff --quiet || (git add -A && git commit -m "style: apply cargo fmt formatting fixes")) && \
+cargo fmt -- --check && \
+RUSTFLAGS="-A dead_code" cargo test && \
+RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warnings
+
+# 5. Rebase on main
+git fetch origin main && git rebase origin/main
+
+# 6. Push to remote
+git push origin feat/123-awesome-feature --force-with-lease
+
+# 7. Create PR with issue link
+gh pr create --title "feat: implement awesome feature" --body "Closes #123
+
+## Summary
+- Implemented the awesome feature
+- Added tests
+- Updated documentation
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+
+# Issue #123 will automatically be closed when PR is merged
+```
+
+### Quick Reference
+
+| Action | Command |
+|--------|---------|
+| View issue | `gh issue view <number>` |
+| List open issues | `gh issue list` |
+| Mark in progress | `gh issue edit <number> --add-label "in progress"` |
+| Link PR to issue | Use `Closes #<number>` in PR body |
+| Check issue status | `gh issue view <number>` |
+
+**Remember:**
+- ✅ **DO** update issue to "In Progress" when you start work
+- ✅ **DO** link PRs to issues with "Closes #X" in PR description
+- ✅ **DO** reference issues in commits with "#X"
+- ❌ **DON'T** manually close issues - let GitHub Actions handle it
+
 ## Notes
 
 - This project intentionally includes unused code for future features (SSH connections, credential management)
