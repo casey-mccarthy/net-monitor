@@ -196,6 +196,15 @@ impl Database {
 
     /// Adds a new node to the database
     pub fn add_node(&self, node: &Node) -> Result<i64> {
+        // Validate: HTTP nodes cannot have credentials (SSH-only feature)
+        if matches!(node.detail, crate::models::MonitorDetail::Http { .. })
+            && node.credential_id.is_some()
+        {
+            return Err(anyhow::anyhow!(
+                "HTTP/HTTPS targets do not support credentials. Credentials are only supported for SSH-based connections (Ping, TCP)."
+            ));
+        }
+
         let conn = self.get_connection()?;
         let (
             monitor_type,
@@ -240,6 +249,15 @@ impl Database {
 
     /// Updates an existing node in the database
     pub fn update_node(&self, node: &Node) -> Result<()> {
+        // Validate: HTTP nodes cannot have credentials (SSH-only feature)
+        if matches!(node.detail, crate::models::MonitorDetail::Http { .. })
+            && node.credential_id.is_some()
+        {
+            return Err(anyhow::anyhow!(
+                "HTTP/HTTPS targets do not support credentials. Credentials are only supported for SSH-based connections (Ping, TCP)."
+            ));
+        }
+
         let conn = self.get_connection()?;
         let (
             monitor_type,

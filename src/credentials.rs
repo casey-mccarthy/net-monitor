@@ -1,3 +1,10 @@
+//! Credential management for SSH connections.
+//!
+//! This module provides secure storage and management of SSH credentials.
+//! **Note:** Credentials are only supported for SSH-based connections (SSH, Ping, TCP).
+//! HTTP/HTTPS targets do not support credential-based authentication and will open
+//! in the default web browser without any credential handling.
+
 use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng as AeadOsRng},
     Aes256Gcm, Key, Nonce,
