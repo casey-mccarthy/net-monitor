@@ -153,22 +153,11 @@ When making changes:
 
 This project uses **rebasing** to maintain a clean, linear commit history.
 
-### Direct to Main (Simple Fixes)
+**🚨 CRITICAL: Never push directly to main.** All changes must go through a pull request, regardless of size or complexity.
 
-For simple, standalone fixes or changes:
+### Standard Workflow (All Changes)
 
-```bash
-# Make changes on main branch
-git add .
-git commit -m "fix: description of fix"
-git push origin main
-```
-
-This triggers automatic semantic versioning and release based on commit type.
-
-### Feature Branch Workflow (Complex Changes)
-
-For features or changes requiring review:
+All changes, from simple fixes to complex features, follow this workflow:
 
 #### 1. Create Feature Branch
 ```bash
@@ -287,13 +276,26 @@ git push origin feature/branch-name --force-with-lease
 - **Better for releases**: Changelog generation is clearer
 - **Easier debugging**: `git bisect` works better with linear history
 
-### When to Use Each Workflow
+### Why This Workflow?
 
-| Scenario | Workflow | Why |
-|----------|----------|-----|
-| Quick fix, doc update, small change | Direct to main | Fast, triggers auto-release |
-| New feature, refactor, breaking change | Feature branch + rebase + PR | Allows review, testing, discussion |
-| Hotfix for production issue | Feature branch + rebase + PR | Document the fix, maintain history |
+**All changes require PRs because:**
+- ✅ **Code Review**: Even small changes benefit from a second pair of eyes
+- ✅ **CI Validation**: Ensures all checks pass before merging
+- ✅ **Documentation**: PRs create a searchable history of why changes were made
+- ✅ **Reversibility**: Easy to revert a PR if issues are discovered
+- ✅ **Consistency**: One workflow for everything, no exceptions
+
+**Branch naming conventions:**
+
+| Change Type | Branch Name Pattern | Example |
+|-------------|-------------------|---------|
+| New feature | `feat/description` or `feat/123-description` | `feat/add-ssh-support` |
+| Bug fix | `fix/description` or `fix/456-description` | `fix/credential-validation` |
+| Documentation | `docs/description` | `docs/update-readme` |
+| Refactoring | `refactor/description` | `refactor/database-layer` |
+| Performance | `perf/description` | `perf/optimize-monitoring` |
+| Tests | `test/description` | `test/add-coverage` |
+| Chore | `chore/description` | `chore/update-dependencies` |
 
 ## Working with GitHub Issues
 
@@ -436,6 +438,8 @@ gh pr create --title "feat: implement awesome feature" --body "Closes #123
 
 ## Notes
 
+- **🚨 NEVER push directly to main** - All changes must go through a pull request, no exceptions
+- PRs trigger automatic semantic versioning and releases when merged to main
 - This project intentionally includes unused code for future features (SSH connections, credential management)
 - Dead code warnings are suppressed to maintain clean build output
 - The `-A dead_code` flag allows unused functions/structs without warnings
