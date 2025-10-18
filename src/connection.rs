@@ -4,9 +4,8 @@
 //! **Note:** Only SSH-based connections (SSH, Ping, TCP) support credential-based authentication.
 //! HTTP/HTTPS targets will always open in the default web browser without credential handling.
 
-use crate::credentials::{CredentialStore, SshCredential};
+use crate::credentials::SshCredential;
 use anyhow::{anyhow, Result};
-use std::net::{TcpStream, ToSocketAddrs};
 use std::process::{Command, Stdio};
 use tracing::{error, info, warn};
 
@@ -24,10 +23,6 @@ pub trait ConnectionStrategy: Send + Sync {
 pub trait AuthenticatedConnectionStrategy: ConnectionStrategy {
     /// Connect to the target using provided credentials
     fn connect_with_credentials(&self, target: &str, credential: &SshCredential) -> Result<()>;
-
-    /// Test if a connection can be established (without fully connecting)
-    #[allow(dead_code)]
-    fn test_connection(&self, target: &str, credential: Option<&SshCredential>) -> Result<bool>;
 }
 
 /// HTTP connection strategy - opens URLs in the default web browser.
@@ -65,11 +60,7 @@ impl ConnectionStrategy for HttpConnectionStrategy {
 }
 
 /// SSH connection strategy - opens SSH connection in terminal
-pub struct SshConnectionStrategy {
-    /// Optional credential store for retrieving credentials
-    #[allow(dead_code)]
-    pub credential_store: Option<Box<dyn CredentialStore>>,
-}
+pub struct SshConnectionStrategy;
 
 impl Default for SshConnectionStrategy {
     fn default() -> Self {
@@ -80,17 +71,7 @@ impl Default for SshConnectionStrategy {
 impl SshConnectionStrategy {
     /// Create a new SSH connection strategy
     pub fn new() -> Self {
-        Self {
-            credential_store: None,
-        }
-    }
-
-    /// Create a new SSH connection strategy with credential store
-    #[allow(dead_code)]
-    pub fn with_credential_store(credential_store: Box<dyn CredentialStore>) -> Self {
-        Self {
-            credential_store: Some(credential_store),
-        }
+        Self
     }
 
     /// Parse the target to extract host and optional port
@@ -198,25 +179,6 @@ impl SshConnectionStrategy {
         }
 
         Ok(command)
-    }
-
-    /// Test TCP connection to SSH port
-    #[allow(dead_code)]
-    fn test_tcp_connection(&self, host: &str, port: u16) -> Result<bool> {
-        let addr = format!("{}:{}", host, port);
-        match addr.to_socket_addrs() {
-            Ok(mut addrs) => {
-                if let Some(addr) = addrs.next() {
-                    match TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(5)) {
-                        Ok(_) => Ok(true),
-                        Err(_) => Ok(false),
-                    }
-                } else {
-                    Ok(false)
-                }
-            }
-            Err(_) => Ok(false),
-        }
     }
 }
 
@@ -342,77 +304,10 @@ impl AuthenticatedConnectionStrategy for SshConnectionStrategy {
 
         Ok(())
     }
-
-    fn test_connection(&self, target: &str, _credential: Option<&SshCredential>) -> Result<bool> {
-        let (host, port) = self.parse_target(target);
-
-        // First, test basic TCP connectivity
-        if !self.test_tcp_connection(&host, port)? {
-            return Ok(false);
-        }
-
-        // For now, if TCP connection works, assume SSH will work
-        // In a full implementation, we could use the ssh2 crate to test actual SSH auth
-        Ok(true)
-    }
-}
-
-/// Ping connection strategy - for nodes that use ping monitoring
-/// This defaults to SSH since ping targets are typically network devices
-#[allow(dead_code)]
-pub struct PingConnectionStrategy {
-    ssh_strategy: SshConnectionStrategy,
-}
-
-impl Default for PingConnectionStrategy {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PingConnectionStrategy {
-    #[allow(dead_code)]
-    pub fn new() -> Self {
-        Self {
-            ssh_strategy: SshConnectionStrategy::new(),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn with_credential_store(credential_store: Box<dyn CredentialStore>) -> Self {
-        Self {
-            ssh_strategy: SshConnectionStrategy::with_credential_store(credential_store),
-        }
-    }
-}
-
-impl ConnectionStrategy for PingConnectionStrategy {
-    fn connect(&self, target: &str) -> Result<()> {
-        // For ping targets, we assume SSH is the desired connection method
-        self.ssh_strategy.connect(target)
-    }
-
-    fn description(&self) -> &str {
-        "Connect via SSH (default for ping targets)"
-    }
-}
-
-impl AuthenticatedConnectionStrategy for PingConnectionStrategy {
-    fn connect_with_credentials(&self, target: &str, credential: &SshCredential) -> Result<()> {
-        // Delegate to SSH strategy
-        self.ssh_strategy
-            .connect_with_credentials(target, credential)
-    }
-
-    fn test_connection(&self, target: &str, _credential: Option<&SshCredential>) -> Result<bool> {
-        // Delegate to SSH strategy
-        self.ssh_strategy.test_connection(target, _credential)
-    }
 }
 
 /// Enum representing different connection types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum ConnectionType {
     Http,
     Ssh,

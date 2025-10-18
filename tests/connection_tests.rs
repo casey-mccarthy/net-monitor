@@ -1,8 +1,7 @@
 // Unit tests for connection module
 
 use net_monitor::connection::{
-    ConnectionStrategy, ConnectionType, HttpConnectionStrategy, PingConnectionStrategy,
-    SshConnectionStrategy,
+    ConnectionStrategy, ConnectionType, HttpConnectionStrategy, SshConnectionStrategy,
 };
 
 #[test]
@@ -19,26 +18,8 @@ fn test_ssh_connection_strategy_new() {
 
 #[test]
 fn test_ssh_connection_strategy_default() {
-    let strategy = SshConnectionStrategy::default();
+    let strategy = SshConnectionStrategy;
     assert_eq!(strategy.description(), "Open SSH connection in terminal");
-}
-
-#[test]
-fn test_ping_connection_strategy_new() {
-    let strategy = PingConnectionStrategy::new();
-    assert_eq!(
-        strategy.description(),
-        "Connect via SSH (default for ping targets)"
-    );
-}
-
-#[test]
-fn test_ping_connection_strategy_default() {
-    let strategy = PingConnectionStrategy::default();
-    assert_eq!(
-        strategy.description(),
-        "Connect via SSH (default for ping targets)"
-    );
 }
 
 #[test]
