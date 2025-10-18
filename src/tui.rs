@@ -3068,6 +3068,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use crate::credentials::{SshCredential, StoredCredential};
@@ -3786,7 +3787,7 @@ mod tests {
             ("500", 500),
         ];
 
-        for (status_str, expected_status) in test_cases {
+        for (status_str, expected_code) in test_cases {
             let mut form = NodeForm::default();
             form.http_url = "https://test.com".to_string();
             form.http_expected_status = status_str.to_string();
@@ -3797,7 +3798,7 @@ mod tests {
                 MonitorDetail::Http {
                     expected_status, ..
                 } => {
-                    assert_eq!(expected_status, expected_status);
+                    assert_eq!(expected_status, expected_code);
                 }
                 _ => panic!("Expected HTTP detail"),
             }
@@ -3960,9 +3961,7 @@ mod tests {
         let area = Rect::new(0, 0, 200, 50);
         let centered = centered_rect(50, 80, area);
 
-        // Should center in the rectangular area
-        assert!(centered.x >= 0);
-        assert!(centered.y >= 0);
+        // Should center in the rectangular area (x and y are u16, always >= 0)
         assert!(centered.width <= 200);
         assert!(centered.height <= 50);
     }
