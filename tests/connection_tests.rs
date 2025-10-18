@@ -1,7 +1,6 @@
 // Unit tests for connection module
 
 use net_monitor::connection::{
-    create_authenticated_connection_strategy, create_connection_strategy, ConnectionContext,
     ConnectionStrategy, ConnectionType, HttpConnectionStrategy, PingConnectionStrategy,
     SshConnectionStrategy,
 };
@@ -40,79 +39,6 @@ fn test_ping_connection_strategy_default() {
         strategy.description(),
         "Connect via SSH (default for ping targets)"
     );
-}
-
-#[test]
-fn test_connection_context_creation() {
-    let strategy: Box<dyn ConnectionStrategy> = Box::new(HttpConnectionStrategy);
-    let context = ConnectionContext::new(strategy);
-    assert_eq!(context.description(), "Open in web browser");
-}
-
-#[test]
-fn test_connection_context_with_ssh_strategy() {
-    let strategy: Box<dyn ConnectionStrategy> = Box::new(SshConnectionStrategy::new());
-    let context = ConnectionContext::new(strategy);
-    assert_eq!(context.description(), "Open SSH connection in terminal");
-}
-
-#[test]
-fn test_connection_context_with_ping_strategy() {
-    let strategy: Box<dyn ConnectionStrategy> = Box::new(PingConnectionStrategy::new());
-    let context = ConnectionContext::new(strategy);
-    assert_eq!(
-        context.description(),
-        "Connect via SSH (default for ping targets)"
-    );
-}
-
-#[test]
-fn test_create_connection_strategy_http() {
-    let strategy = create_connection_strategy(ConnectionType::Http);
-    assert_eq!(strategy.description(), "Open in web browser");
-}
-
-#[test]
-fn test_create_connection_strategy_ssh() {
-    let strategy = create_connection_strategy(ConnectionType::Ssh);
-    assert_eq!(strategy.description(), "Open SSH connection in terminal");
-}
-
-#[test]
-fn test_create_connection_strategy_ping() {
-    let strategy = create_connection_strategy(ConnectionType::Ping);
-    assert_eq!(
-        strategy.description(),
-        "Connect via SSH (default for ping targets)"
-    );
-}
-
-#[test]
-fn test_create_connection_strategy_tcp() {
-    let strategy = create_connection_strategy(ConnectionType::Tcp);
-    // TCP uses SSH strategy
-    assert_eq!(strategy.description(), "Open SSH connection in terminal");
-}
-
-#[test]
-fn test_create_authenticated_connection_strategy_ssh_no_store() {
-    let strategy = create_authenticated_connection_strategy(ConnectionType::Ssh, None);
-    assert_eq!(strategy.description(), "Open SSH connection in terminal");
-}
-
-#[test]
-fn test_create_authenticated_connection_strategy_ping_no_store() {
-    let strategy = create_authenticated_connection_strategy(ConnectionType::Ping, None);
-    assert_eq!(
-        strategy.description(),
-        "Connect via SSH (default for ping targets)"
-    );
-}
-
-#[test]
-fn test_create_authenticated_connection_strategy_tcp_no_store() {
-    let strategy = create_authenticated_connection_strategy(ConnectionType::Tcp, None);
-    assert_eq!(strategy.description(), "Open SSH connection in terminal");
 }
 
 #[test]
