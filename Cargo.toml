@@ -1,6 +1,6 @@
 [package]
 name = "net-monitor"
-version = "0.17.0"
+version = "0.17.1"
 edition = "2021"
 
 # Default binary with CLI mode selection (backward compatible)
