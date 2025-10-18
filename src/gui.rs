@@ -202,8 +202,6 @@ pub struct NetworkMonitorApp {
     show_credentials: bool,
     show_add_credential: bool,
     show_about: bool,
-    #[allow(dead_code)]
-    editing_credential: Option<String>,
     new_credential_form: CredentialForm,
     pending_credential_action: Option<CredentialAction>,
     // Status change history
@@ -254,7 +252,6 @@ impl NetworkMonitorApp {
             show_credentials: false,
             show_add_credential: false,
             show_about: false,
-            editing_credential: None,
             new_credential_form: CredentialForm::default(),
             pending_credential_action: None,
             show_status_history: None,
