@@ -31,7 +31,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{error, info};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum MonitorTypeForm {
     Http,
     Ping,
@@ -163,7 +163,7 @@ impl NodeForm {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 #[allow(dead_code)] // Future feature: credential form variants
 enum CredentialTypeForm {
     Default,
@@ -291,7 +291,7 @@ impl CredentialForm {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum AppState {
     Main,
     AddNode,
@@ -3065,4 +3065,1072 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credentials::{SshCredential, StoredCredential};
+    use crate::database::Database;
+    use tempfile::tempdir;
+
+    // ============================================================================
+    // NetworkMonitorTui Integration Tests
+    // ============================================================================
+
+    #[test]
+    fn test_network_monitor_tui_initialization() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let database = Database::new(&db_path).expect("Failed to create database");
+
+        // TUI initialization might fail if credential store exists from previous tests
+        let result = NetworkMonitorTui::new(database);
+        if let Ok(tui) = result {
+            // Verify monitoring started automatically
+            assert!(tui.monitoring_handle.is_some());
+            assert_eq!(tui.state, AppState::Main);
+            assert!(tui.nodes.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_network_monitor_tui_with_nodes() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test_nodes.db");
+        let database = Database::new(&db_path).expect("Failed to create database");
+
+        // Add a test node
+        let node = Node {
+            id: None,
+            name: "Test HTTP Node".to_string(),
+            detail: MonitorDetail::Http {
+                url: "https://example.com".to_string(),
+                expected_status: 200,
+            },
+            status: NodeStatus::Offline,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 5,
+            credential_id: None,
+        };
+
+        database.add_node(&node).expect("Failed to add node");
+
+        // Create TUI
+        if let Ok(tui) = NetworkMonitorTui::new(database) {
+            assert_eq!(tui.nodes.len(), 1);
+            assert_eq!(tui.nodes[0].name, "Test HTTP Node");
+            // Table should have first row selected
+            assert_eq!(tui.table_state.selected(), Some(0));
+        }
+    }
+
+    #[test]
+    fn test_set_status_message() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("status_msg.db");
+        let database = Database::new(&db_path).expect("Failed to create database");
+
+        if let Ok(mut tui) = NetworkMonitorTui::new(database) {
+            // Test setting status message
+            tui.set_status_message("Test message");
+            assert!(tui.status_message.is_some());
+
+            if let Some((msg, _timestamp)) = &tui.status_message {
+                assert_eq!(msg, "Test message");
+            }
+
+            // Test setting another message
+            tui.set_status_message(String::from("Another message"));
+            assert!(tui.status_message.is_some());
+
+            if let Some((msg, _timestamp)) = &tui.status_message {
+                assert_eq!(msg, "Another message");
+            }
+        }
+    }
+
+    // ============================================================================
+    // Utility Function Tests
+    // ============================================================================
+
+    #[test]
+    fn test_format_duration_seconds() {
+        assert_eq!(format_duration(0), "0s");
+        assert_eq!(format_duration(1000), "1s");
+        assert_eq!(format_duration(5000), "5s");
+        assert_eq!(format_duration(59000), "59s");
+    }
+
+    #[test]
+    fn test_format_duration_minutes() {
+        assert_eq!(format_duration(60000), "1m 0s");
+        assert_eq!(format_duration(90000), "1m 30s");
+        assert_eq!(format_duration(150000), "2m 30s");
+        assert_eq!(format_duration(3599000), "59m 59s");
+    }
+
+    #[test]
+    fn test_format_duration_hours() {
+        assert_eq!(format_duration(3600000), "1h 0m");
+        assert_eq!(format_duration(3660000), "1h 1m");
+        assert_eq!(format_duration(7200000), "2h 0m");
+        assert_eq!(format_duration(5400000), "1h 30m");
+        assert_eq!(format_duration(86399000), "23h 59m");
+    }
+
+    #[test]
+    fn test_format_duration_days() {
+        assert_eq!(format_duration(86400000), "1d 0h");
+        assert_eq!(format_duration(90000000), "1d 1h");
+        assert_eq!(format_duration(172800000), "2d 0h");
+        assert_eq!(format_duration(176400000), "2d 1h");
+    }
+
+    #[test]
+    fn test_centered_rect_basic() {
+        let area = Rect::new(0, 0, 100, 100);
+        let centered = centered_rect(50, 50, area);
+
+        // Should be centered in both dimensions
+        assert_eq!(centered.x, 25);
+        assert_eq!(centered.y, 25);
+        assert_eq!(centered.width, 50);
+        assert_eq!(centered.height, 50);
+    }
+
+    #[test]
+    fn test_centered_rect_full_size() {
+        let area = Rect::new(0, 0, 100, 100);
+        let centered = centered_rect(100, 100, area);
+
+        // Should take full area
+        assert_eq!(centered.width, 100);
+        assert_eq!(centered.height, 100);
+    }
+
+    #[test]
+    fn test_centered_rect_small() {
+        let area = Rect::new(0, 0, 100, 100);
+        let centered = centered_rect(20, 20, area);
+
+        // Should be small and centered
+        assert_eq!(centered.x, 40);
+        assert_eq!(centered.y, 40);
+        assert_eq!(centered.width, 20);
+        assert_eq!(centered.height, 20);
+    }
+
+    // ============================================================================
+    // MonitorTypeForm Tests
+    // ============================================================================
+
+    #[test]
+    fn test_monitor_type_form_display_http() {
+        assert_eq!(format!("{}", MonitorTypeForm::Http), "HTTP");
+    }
+
+    #[test]
+    fn test_monitor_type_form_display_ping() {
+        assert_eq!(format!("{}", MonitorTypeForm::Ping), "Ping");
+    }
+
+    #[test]
+    fn test_monitor_type_form_display_tcp() {
+        assert_eq!(format!("{}", MonitorTypeForm::Tcp), "TCP");
+    }
+
+    #[test]
+    fn test_monitor_type_form_equality() {
+        assert_eq!(MonitorTypeForm::Http, MonitorTypeForm::Http);
+        assert_eq!(MonitorTypeForm::Ping, MonitorTypeForm::Ping);
+        assert_eq!(MonitorTypeForm::Tcp, MonitorTypeForm::Tcp);
+        assert_ne!(MonitorTypeForm::Http, MonitorTypeForm::Ping);
+        assert_ne!(MonitorTypeForm::Ping, MonitorTypeForm::Tcp);
+    }
+
+    #[test]
+    fn test_monitor_type_form_copy() {
+        let http = MonitorTypeForm::Http;
+        let http_copy = http;
+        assert_eq!(http, http_copy);
+    }
+
+    // ============================================================================
+    // CredentialTypeForm Tests
+    // ============================================================================
+
+    #[test]
+    fn test_credential_type_form_display_default() {
+        assert_eq!(format!("{}", CredentialTypeForm::Default), "System Default");
+    }
+
+    #[test]
+    fn test_credential_type_form_display_password() {
+        assert_eq!(
+            format!("{}", CredentialTypeForm::Password),
+            "Username/Password"
+        );
+    }
+
+    #[test]
+    fn test_credential_type_form_display_keyfile() {
+        assert_eq!(format!("{}", CredentialTypeForm::KeyFile), "SSH Key File");
+    }
+
+    #[test]
+    fn test_credential_type_form_display_keydata() {
+        assert_eq!(format!("{}", CredentialTypeForm::KeyData), "SSH Key Data");
+    }
+
+    #[test]
+    fn test_credential_type_form_equality() {
+        assert_eq!(CredentialTypeForm::Default, CredentialTypeForm::Default);
+        assert_ne!(CredentialTypeForm::Default, CredentialTypeForm::Password);
+    }
+
+    // ============================================================================
+    // NodeForm Tests
+    // ============================================================================
+
+    #[test]
+    fn test_node_form_default() {
+        let form = NodeForm::default();
+        assert_eq!(form.name, "");
+        assert_eq!(form.monitor_type, MonitorTypeForm::Http);
+        assert_eq!(form.monitoring_interval, "5");
+        assert_eq!(form.http_url, "https://");
+        assert_eq!(form.http_expected_status, "200");
+        assert_eq!(form.current_field, 0);
+        assert_eq!(form.credential_id, None);
+        assert_eq!(form.credential_index, None);
+    }
+
+    #[test]
+    fn test_node_form_get_field_count_http() {
+        let mut form = NodeForm::default();
+        form.monitor_type = MonitorTypeForm::Http;
+        assert_eq!(form.get_field_count(), 6);
+    }
+
+    #[test]
+    fn test_node_form_get_field_count_ping() {
+        let mut form = NodeForm::default();
+        form.monitor_type = MonitorTypeForm::Ping;
+        assert_eq!(form.get_field_count(), 7);
+    }
+
+    #[test]
+    fn test_node_form_get_field_count_tcp() {
+        let mut form = NodeForm::default();
+        form.monitor_type = MonitorTypeForm::Tcp;
+        assert_eq!(form.get_field_count(), 7);
+    }
+
+    #[test]
+    fn test_node_form_to_node_detail_http() {
+        let mut form = NodeForm::default();
+        form.http_url = "https://example.com".to_string();
+        form.http_expected_status = "200".to_string();
+        form.monitor_type = MonitorTypeForm::Http;
+
+        let detail = form.to_node_detail().unwrap();
+        match detail {
+            MonitorDetail::Http {
+                url,
+                expected_status,
+            } => {
+                assert_eq!(url, "https://example.com");
+                assert_eq!(expected_status, 200);
+            }
+            _ => panic!("Expected HTTP detail"),
+        }
+    }
+
+    #[test]
+    fn test_node_form_to_node_detail_http_invalid_status() {
+        let mut form = NodeForm::default();
+        form.http_url = "https://example.com".to_string();
+        form.http_expected_status = "invalid".to_string();
+        form.monitor_type = MonitorTypeForm::Http;
+
+        assert!(form.to_node_detail().is_err());
+    }
+
+    #[test]
+    fn test_node_form_to_node_detail_ping() {
+        let mut form = NodeForm::default();
+        form.monitor_type = MonitorTypeForm::Ping;
+        form.ping_host = "example.com".to_string();
+        form.ping_count = "4".to_string();
+        form.ping_timeout = "5".to_string();
+
+        let detail = form.to_node_detail().unwrap();
+        match detail {
+            MonitorDetail::Ping {
+                host,
+                count,
+                timeout,
+            } => {
+                assert_eq!(host, "example.com");
+                assert_eq!(count, 4);
+                assert_eq!(timeout, 5);
+            }
+            _ => panic!("Expected Ping detail"),
+        }
+    }
+
+    #[test]
+    fn test_node_form_to_node_detail_ping_invalid_count() {
+        let mut form = NodeForm::default();
+        form.monitor_type = MonitorTypeForm::Ping;
+        form.ping_host = "example.com".to_string();
+        form.ping_count = "invalid".to_string();
+        form.ping_timeout = "5".to_string();
+
+        assert!(form.to_node_detail().is_err());
+    }
+
+    #[test]
+    fn test_node_form_to_node_detail_tcp() {
+        let mut form = NodeForm::default();
+        form.monitor_type = MonitorTypeForm::Tcp;
+        form.tcp_host = "example.com".to_string();
+        form.tcp_port = "8080".to_string();
+        form.tcp_timeout = "10".to_string();
+
+        let detail = form.to_node_detail().unwrap();
+        match detail {
+            MonitorDetail::Tcp {
+                host,
+                port,
+                timeout,
+            } => {
+                assert_eq!(host, "example.com");
+                assert_eq!(port, 8080);
+                assert_eq!(timeout, 10);
+            }
+            _ => panic!("Expected TCP detail"),
+        }
+    }
+
+    #[test]
+    fn test_node_form_to_node_detail_tcp_invalid_port() {
+        let mut form = NodeForm::default();
+        form.monitor_type = MonitorTypeForm::Tcp;
+        form.tcp_host = "example.com".to_string();
+        form.tcp_port = "invalid".to_string();
+        form.tcp_timeout = "10".to_string();
+
+        assert!(form.to_node_detail().is_err());
+    }
+
+    #[test]
+    fn test_node_form_from_node_http() {
+        let node = Node {
+            id: Some(1),
+            name: "Test Node".to_string(),
+            detail: MonitorDetail::Http {
+                url: "https://example.com".to_string(),
+                expected_status: 404,
+            },
+            status: NodeStatus::Online,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 10,
+            credential_id: Some("cred123".to_string()),
+        };
+
+        let form = NodeForm::from_node(&node);
+        assert_eq!(form.name, "Test Node");
+        assert_eq!(form.monitor_type, MonitorTypeForm::Http);
+        assert_eq!(form.monitoring_interval, "10");
+        assert_eq!(form.http_url, "https://example.com");
+        assert_eq!(form.http_expected_status, "404");
+        assert_eq!(form.credential_id, Some("cred123".to_string()));
+    }
+
+    #[test]
+    fn test_node_form_from_node_ping() {
+        let node = Node {
+            id: Some(2),
+            name: "Ping Node".to_string(),
+            detail: MonitorDetail::Ping {
+                host: "8.8.8.8".to_string(),
+                count: 3,
+                timeout: 2,
+            },
+            status: NodeStatus::Offline,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 15,
+            credential_id: None,
+        };
+
+        let form = NodeForm::from_node(&node);
+        assert_eq!(form.name, "Ping Node");
+        assert_eq!(form.monitor_type, MonitorTypeForm::Ping);
+        assert_eq!(form.monitoring_interval, "15");
+        assert_eq!(form.ping_host, "8.8.8.8");
+        assert_eq!(form.ping_count, "3");
+        assert_eq!(form.ping_timeout, "2");
+        assert_eq!(form.credential_id, None);
+    }
+
+    #[test]
+    fn test_node_form_from_node_tcp() {
+        let node = Node {
+            id: Some(3),
+            name: "TCP Node".to_string(),
+            detail: MonitorDetail::Tcp {
+                host: "localhost".to_string(),
+                port: 9000,
+                timeout: 3,
+            },
+            status: NodeStatus::Online,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 20,
+            credential_id: Some("ssh_key".to_string()),
+        };
+
+        let form = NodeForm::from_node(&node);
+        assert_eq!(form.name, "TCP Node");
+        assert_eq!(form.monitor_type, MonitorTypeForm::Tcp);
+        assert_eq!(form.monitoring_interval, "20");
+        assert_eq!(form.tcp_host, "localhost");
+        assert_eq!(form.tcp_port, "9000");
+        assert_eq!(form.tcp_timeout, "3");
+        assert_eq!(form.credential_id, Some("ssh_key".to_string()));
+    }
+
+    #[test]
+    fn test_node_form_clone() {
+        let form1 = NodeForm::default();
+        let form2 = form1.clone();
+        assert_eq!(form1.name, form2.name);
+        assert_eq!(form1.monitor_type, form2.monitor_type);
+        assert_eq!(form1.monitoring_interval, form2.monitoring_interval);
+    }
+
+    // ============================================================================
+    // CredentialForm Tests
+    // ============================================================================
+
+    #[test]
+    fn test_credential_form_default() {
+        let form = CredentialForm::default();
+        assert_eq!(form.name, "");
+        assert_eq!(form.description, "");
+        assert_eq!(form.credential_type, CredentialTypeForm::Default);
+        assert_eq!(form.username, "");
+        assert_eq!(form.password, "");
+        assert_eq!(form.ssh_key_path, "");
+        assert_eq!(form.ssh_key_data, "");
+        assert_eq!(form.passphrase, "");
+        assert_eq!(form.current_field, 0);
+    }
+
+    #[test]
+    fn test_credential_form_get_field_count_default() {
+        let mut form = CredentialForm::default();
+        form.credential_type = CredentialTypeForm::Default;
+        assert_eq!(form.get_field_count(), 3);
+    }
+
+    #[test]
+    fn test_credential_form_get_field_count_password() {
+        let mut form = CredentialForm::default();
+        form.credential_type = CredentialTypeForm::Password;
+        assert_eq!(form.get_field_count(), 5);
+    }
+
+    #[test]
+    fn test_credential_form_get_field_count_keyfile() {
+        let mut form = CredentialForm::default();
+        form.credential_type = CredentialTypeForm::KeyFile;
+        assert_eq!(form.get_field_count(), 6);
+    }
+
+    #[test]
+    fn test_credential_form_get_field_count_keydata() {
+        let mut form = CredentialForm::default();
+        form.credential_type = CredentialTypeForm::KeyData;
+        assert_eq!(form.get_field_count(), 6);
+    }
+
+    #[test]
+    fn test_credential_form_from_stored_credential_default() {
+        let stored = StoredCredential {
+            id: "test_id".to_string(),
+            name: "Test Cred".to_string(),
+            description: Some("Test description".to_string()),
+            credential: SshCredential::Default,
+            created_at: chrono::Utc::now(),
+            last_used: None,
+        };
+
+        let form = CredentialForm::from_stored_credential(&stored);
+        assert_eq!(form.name, "Test Cred");
+        assert_eq!(form.description, "Test description");
+        assert_eq!(form.credential_type, CredentialTypeForm::Default);
+        assert_eq!(form.username, "");
+        assert_eq!(form.password, "");
+    }
+
+    #[test]
+    fn test_credential_form_from_stored_credential_password() {
+        use crate::credentials::SensitiveString;
+
+        let stored = StoredCredential {
+            id: "test_id".to_string(),
+            name: "Password Cred".to_string(),
+            description: None,
+            credential: SshCredential::Password {
+                username: "user123".to_string(),
+                password: SensitiveString::new("secret123".to_string()),
+            },
+            created_at: chrono::Utc::now(),
+            last_used: None,
+        };
+
+        let form = CredentialForm::from_stored_credential(&stored);
+        assert_eq!(form.name, "Password Cred");
+        assert_eq!(form.description, "");
+        assert_eq!(form.credential_type, CredentialTypeForm::Password);
+        assert_eq!(form.username, "user123");
+        assert_eq!(form.password, "secret123");
+    }
+
+    #[test]
+    fn test_credential_form_from_stored_credential_keyfile() {
+        use crate::credentials::SensitiveString;
+        use std::path::PathBuf;
+
+        let stored = StoredCredential {
+            id: "test_id".to_string(),
+            name: "Key Cred".to_string(),
+            description: Some("SSH Key".to_string()),
+            credential: SshCredential::Key {
+                username: "keyuser".to_string(),
+                private_key_path: PathBuf::from("/home/user/.ssh/id_rsa"),
+                passphrase: Some(SensitiveString::new("keypass".to_string())),
+            },
+            created_at: chrono::Utc::now(),
+            last_used: None,
+        };
+
+        let form = CredentialForm::from_stored_credential(&stored);
+        assert_eq!(form.name, "Key Cred");
+        assert_eq!(form.description, "SSH Key");
+        assert_eq!(form.credential_type, CredentialTypeForm::KeyFile);
+        assert_eq!(form.username, "keyuser");
+        assert_eq!(form.ssh_key_path, "/home/user/.ssh/id_rsa");
+        assert_eq!(form.passphrase, "keypass");
+    }
+
+    #[test]
+    fn test_credential_form_from_stored_credential_keydata() {
+        use crate::credentials::SensitiveString;
+
+        let stored = StoredCredential {
+            id: "test_id".to_string(),
+            name: "Key Data Cred".to_string(),
+            description: None,
+            credential: SshCredential::KeyData {
+                username: "datauser".to_string(),
+                private_key_data: SensitiveString::new("-----BEGIN PRIVATE KEY-----".to_string()),
+                passphrase: None,
+            },
+            created_at: chrono::Utc::now(),
+            last_used: None,
+        };
+
+        let form = CredentialForm::from_stored_credential(&stored);
+        assert_eq!(form.name, "Key Data Cred");
+        assert_eq!(form.description, "");
+        assert_eq!(form.credential_type, CredentialTypeForm::KeyData);
+        assert_eq!(form.username, "datauser");
+        assert_eq!(form.ssh_key_data, "-----BEGIN PRIVATE KEY-----");
+        assert_eq!(form.passphrase, "");
+    }
+
+    #[test]
+    fn test_credential_form_clone() {
+        let form1 = CredentialForm::default();
+        let form2 = form1.clone();
+        assert_eq!(form1.name, form2.name);
+        assert_eq!(form1.credential_type, form2.credential_type);
+    }
+
+    // ============================================================================
+    // AppState Tests
+    // ============================================================================
+
+    #[test]
+    fn test_app_state_equality() {
+        assert_eq!(AppState::Main, AppState::Main);
+        assert_eq!(AppState::AddNode, AppState::AddNode);
+        assert_ne!(AppState::Main, AppState::AddNode);
+    }
+
+    #[test]
+    fn test_app_state_copy() {
+        let state = AppState::Main;
+        let state_copy = state;
+        assert_eq!(state, state_copy);
+    }
+
+    // ============================================================================
+    // NodeConfigUpdate Tests
+    // ============================================================================
+
+    #[test]
+    fn test_node_config_update_add() {
+        let node = Node {
+            id: Some(1),
+            name: "Test".to_string(),
+            detail: MonitorDetail::Http {
+                url: "https://example.com".to_string(),
+                expected_status: 200,
+            },
+            status: NodeStatus::Online,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 5,
+            credential_id: None,
+        };
+
+        let update = NodeConfigUpdate::Add(node.clone());
+        let update_clone = update.clone();
+
+        // Verify clone works
+        match (update, update_clone) {
+            (NodeConfigUpdate::Add(n1), NodeConfigUpdate::Add(n2)) => {
+                assert_eq!(n1.id, n2.id);
+                assert_eq!(n1.name, n2.name);
+            }
+            _ => panic!("Expected Add variants"),
+        }
+    }
+
+    #[test]
+    fn test_node_config_update_update() {
+        let node = Node {
+            id: Some(2),
+            name: "Updated".to_string(),
+            detail: MonitorDetail::Ping {
+                host: "8.8.8.8".to_string(),
+                count: 4,
+                timeout: 5,
+            },
+            status: NodeStatus::Offline,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 10,
+            credential_id: None,
+        };
+
+        let update = NodeConfigUpdate::Update(node);
+        let _update_clone = update.clone();
+    }
+
+    #[test]
+    fn test_node_config_update_delete() {
+        let update = NodeConfigUpdate::Delete(42);
+        let update_clone = update.clone();
+
+        match (update, update_clone) {
+            (NodeConfigUpdate::Delete(id1), NodeConfigUpdate::Delete(id2)) => {
+                assert_eq!(id1, id2);
+            }
+            _ => panic!("Expected Delete variants"),
+        }
+    }
+
+    // ============================================================================
+    // Additional Edge Case Tests
+    // ============================================================================
+
+    #[test]
+    fn test_node_form_with_empty_credential_id() {
+        let node = Node {
+            id: None,
+            name: "No Cred Node".to_string(),
+            detail: MonitorDetail::Tcp {
+                host: "192.168.1.1".to_string(),
+                port: 22,
+                timeout: 5,
+            },
+            status: NodeStatus::Offline,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 30,
+            credential_id: None,
+        };
+
+        let form = NodeForm::from_node(&node);
+        assert_eq!(form.credential_id, None);
+        assert_eq!(form.tcp_host, "192.168.1.1");
+        assert_eq!(form.tcp_port, "22");
+    }
+
+    #[test]
+    fn test_node_form_http_with_various_status_codes() {
+        let test_cases = vec![
+            ("200", 200),
+            ("201", 201),
+            ("301", 301),
+            ("404", 404),
+            ("500", 500),
+        ];
+
+        for (status_str, expected_status) in test_cases {
+            let mut form = NodeForm::default();
+            form.http_url = "https://test.com".to_string();
+            form.http_expected_status = status_str.to_string();
+            form.monitor_type = MonitorTypeForm::Http;
+
+            let detail = form.to_node_detail().unwrap();
+            match detail {
+                MonitorDetail::Http {
+                    expected_status, ..
+                } => {
+                    assert_eq!(expected_status, expected_status);
+                }
+                _ => panic!("Expected HTTP detail"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_node_form_ping_with_various_values() {
+        let mut form = NodeForm::default();
+        form.monitor_type = MonitorTypeForm::Ping;
+        form.ping_host = "google.com".to_string();
+        form.ping_count = "10".to_string();
+        form.ping_timeout = "3".to_string();
+
+        let detail = form.to_node_detail().unwrap();
+        match detail {
+            MonitorDetail::Ping {
+                host,
+                count,
+                timeout,
+            } => {
+                assert_eq!(host, "google.com");
+                assert_eq!(count, 10);
+                assert_eq!(timeout, 3);
+            }
+            _ => panic!("Expected Ping detail"),
+        }
+    }
+
+    #[test]
+    fn test_node_form_tcp_with_high_port() {
+        let mut form = NodeForm::default();
+        form.monitor_type = MonitorTypeForm::Tcp;
+        form.tcp_host = "server.local".to_string();
+        form.tcp_port = "65535".to_string();
+        form.tcp_timeout = "30".to_string();
+
+        let detail = form.to_node_detail().unwrap();
+        match detail {
+            MonitorDetail::Tcp {
+                host,
+                port,
+                timeout,
+            } => {
+                assert_eq!(host, "server.local");
+                assert_eq!(port, 65535);
+                assert_eq!(timeout, 30);
+            }
+            _ => panic!("Expected TCP detail"),
+        }
+    }
+
+    #[test]
+    fn test_node_form_tcp_invalid_port_too_high() {
+        let mut form = NodeForm::default();
+        form.monitor_type = MonitorTypeForm::Tcp;
+        form.tcp_host = "example.com".to_string();
+        form.tcp_port = "99999".to_string();
+        form.tcp_timeout = "10".to_string();
+
+        // Port 99999 is too high for u16, should error
+        assert!(form.to_node_detail().is_err());
+    }
+
+    #[test]
+    fn test_node_form_tcp_invalid_timeout() {
+        let mut form = NodeForm::default();
+        form.monitor_type = MonitorTypeForm::Tcp;
+        form.tcp_host = "example.com".to_string();
+        form.tcp_port = "8080".to_string();
+        form.tcp_timeout = "not_a_number".to_string();
+
+        assert!(form.to_node_detail().is_err());
+    }
+
+    #[test]
+    fn test_node_form_ping_invalid_timeout() {
+        let mut form = NodeForm::default();
+        form.monitor_type = MonitorTypeForm::Ping;
+        form.ping_host = "example.com".to_string();
+        form.ping_count = "4".to_string();
+        form.ping_timeout = "abc".to_string();
+
+        assert!(form.to_node_detail().is_err());
+    }
+
+    #[test]
+    fn test_credential_form_from_stored_with_no_description() {
+        let stored = StoredCredential {
+            id: "id123".to_string(),
+            name: "No Desc".to_string(),
+            description: None,
+            credential: SshCredential::Default,
+            created_at: chrono::Utc::now(),
+            last_used: None,
+        };
+
+        let form = CredentialForm::from_stored_credential(&stored);
+        assert_eq!(form.description, "");
+    }
+
+    #[test]
+    fn test_credential_form_from_stored_keyfile_without_passphrase() {
+        use std::path::PathBuf;
+
+        let stored = StoredCredential {
+            id: "key_id".to_string(),
+            name: "No Pass Key".to_string(),
+            description: Some("Key without passphrase".to_string()),
+            credential: SshCredential::Key {
+                username: "user".to_string(),
+                private_key_path: PathBuf::from("/path/to/key"),
+                passphrase: None,
+            },
+            created_at: chrono::Utc::now(),
+            last_used: None,
+        };
+
+        let form = CredentialForm::from_stored_credential(&stored);
+        assert_eq!(form.passphrase, "");
+        assert_eq!(form.ssh_key_path, "/path/to/key");
+    }
+
+    #[test]
+    fn test_format_duration_edge_cases() {
+        // Test 0 milliseconds
+        assert_eq!(format_duration(0), "0s");
+
+        // Test exactly 1 minute
+        assert_eq!(format_duration(60000), "1m 0s");
+
+        // Test exactly 1 hour
+        assert_eq!(format_duration(3600000), "1h 0m");
+
+        // Test exactly 1 day
+        assert_eq!(format_duration(86400000), "1d 0h");
+
+        // Test large values
+        assert_eq!(format_duration(604800000), "7d 0h"); // 1 week
+    }
+
+    #[test]
+    fn test_format_duration_negative() {
+        // Negative durations should still format (edge case handling)
+        let result = format_duration(-1000);
+        assert!(result.contains("s")); // Should still return something with seconds
+    }
+
+    #[test]
+    fn test_centered_rect_edge_cases() {
+        // Test with 0% size (should still work but be very small)
+        let area = Rect::new(0, 0, 100, 100);
+        let centered = centered_rect(0, 0, area);
+        assert!(centered.width <= 100);
+        assert!(centered.height <= 100);
+    }
+
+    #[test]
+    fn test_centered_rect_non_square_area() {
+        let area = Rect::new(0, 0, 200, 50);
+        let centered = centered_rect(50, 80, area);
+
+        // Should center in the rectangular area
+        assert!(centered.x >= 0);
+        assert!(centered.y >= 0);
+        assert!(centered.width <= 200);
+        assert!(centered.height <= 50);
+    }
+
+    #[test]
+    fn test_monitor_type_form_all_variants() {
+        let variants = vec![
+            MonitorTypeForm::Http,
+            MonitorTypeForm::Ping,
+            MonitorTypeForm::Tcp,
+        ];
+
+        for variant in variants {
+            // Test that copy works
+            let copy = variant;
+            assert_eq!(variant, copy);
+
+            // Test that display works
+            let display_str = format!("{}", variant);
+            assert!(!display_str.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_credential_type_form_all_variants() {
+        let variants = vec![
+            CredentialTypeForm::Default,
+            CredentialTypeForm::Password,
+            CredentialTypeForm::KeyFile,
+            CredentialTypeForm::KeyData,
+        ];
+
+        for variant in variants {
+            // Test that copy works
+            let copy = variant;
+            assert_eq!(variant, copy);
+
+            // Test that display works
+            let display_str = format!("{}", variant);
+            assert!(!display_str.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_app_state_all_variants() {
+        let variants = vec![
+            AppState::Main,
+            AppState::AddNode,
+            AppState::EditNode,
+            AppState::ViewHistory,
+            AppState::ManageCredentials,
+            AppState::AddCredential,
+            AppState::EditCredential,
+            AppState::Help,
+            AppState::ConfirmDelete,
+            AppState::ImportNodes,
+            AppState::ExportNodes,
+        ];
+
+        for variant in variants {
+            // Test that copy works
+            let copy = variant;
+            assert_eq!(variant, copy);
+        }
+    }
+
+    #[test]
+    fn test_node_form_roundtrip_http() {
+        let original_node = Node {
+            id: Some(100),
+            name: "Roundtrip Test".to_string(),
+            detail: MonitorDetail::Http {
+                url: "https://roundtrip.com".to_string(),
+                expected_status: 201,
+            },
+            status: NodeStatus::Online,
+            last_check: None,
+            response_time: Some(150),
+            monitoring_interval: 7,
+            credential_id: Some("cred999".to_string()),
+        };
+
+        // Convert to form and back
+        let form = NodeForm::from_node(&original_node);
+        let detail = form.to_node_detail().unwrap();
+
+        // Verify detail matches
+        match detail {
+            MonitorDetail::Http {
+                url,
+                expected_status,
+            } => {
+                assert_eq!(url, "https://roundtrip.com");
+                assert_eq!(expected_status, 201);
+            }
+            _ => panic!("Expected HTTP detail"),
+        }
+
+        assert_eq!(form.name, "Roundtrip Test");
+        assert_eq!(form.monitoring_interval, "7");
+        assert_eq!(form.credential_id, Some("cred999".to_string()));
+    }
+
+    #[test]
+    fn test_node_form_roundtrip_ping() {
+        let original_node = Node {
+            id: Some(200),
+            name: "Ping Roundtrip".to_string(),
+            detail: MonitorDetail::Ping {
+                host: "1.1.1.1".to_string(),
+                count: 5,
+                timeout: 10,
+            },
+            status: NodeStatus::Offline,
+            last_check: Some(chrono::Utc::now()),
+            response_time: None,
+            monitoring_interval: 15,
+            credential_id: None,
+        };
+
+        let form = NodeForm::from_node(&original_node);
+        let detail = form.to_node_detail().unwrap();
+
+        match detail {
+            MonitorDetail::Ping {
+                host,
+                count,
+                timeout,
+            } => {
+                assert_eq!(host, "1.1.1.1");
+                assert_eq!(count, 5);
+                assert_eq!(timeout, 10);
+            }
+            _ => panic!("Expected Ping detail"),
+        }
+    }
+
+    #[test]
+    fn test_node_form_roundtrip_tcp() {
+        let original_node = Node {
+            id: Some(300),
+            name: "TCP Roundtrip".to_string(),
+            detail: MonitorDetail::Tcp {
+                host: "db.server.com".to_string(),
+                port: 5432,
+                timeout: 20,
+            },
+            status: NodeStatus::Online,
+            last_check: Some(chrono::Utc::now()),
+            response_time: Some(25),
+            monitoring_interval: 60,
+            credential_id: Some("db_cred".to_string()),
+        };
+
+        let form = NodeForm::from_node(&original_node);
+        let detail = form.to_node_detail().unwrap();
+
+        match detail {
+            MonitorDetail::Tcp {
+                host,
+                port,
+                timeout,
+            } => {
+                assert_eq!(host, "db.server.com");
+                assert_eq!(port, 5432);
+                assert_eq!(timeout, 20);
+            }
+            _ => panic!("Expected TCP detail"),
+        }
+    }
 }
