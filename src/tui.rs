@@ -664,13 +664,20 @@ impl NetworkMonitorTui {
         f.render_widget(menu, content_chunks[0]);
 
         // Node table
-        let header = Row::new(vec!["Name", "Target", "Type", "Status", "Last Check"])
-            .style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .bottom_margin(1);
+        let header = Row::new(vec![
+            "Name",
+            "Target",
+            "Type",
+            "Status",
+            "Uptime/Downtime",
+            "Last Check",
+        ])
+        .style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .bottom_margin(1);
 
         let rows: Vec<Row> = self
             .nodes
@@ -732,6 +739,16 @@ impl NetworkMonitorTui {
                     Color::White
                 };
 
+                // Get uptime/downtime
+                let uptime_downtime = if let Some(node_id) = node.id {
+                    match self.database.get_current_status_duration(node_id) {
+                        Ok(Some(duration_ms)) => format_duration(duration_ms),
+                        _ => "N/A".to_string(),
+                    }
+                } else {
+                    "N/A".to_string()
+                };
+
                 // Create cells with individual styling
                 let cells = vec![
                     Cell::from(node.name.clone()).style(Style::default().fg(Color::White)),
@@ -743,6 +760,7 @@ impl NetworkMonitorTui {
                             .fg(status_color)
                             .add_modifier(Modifier::BOLD),
                     ),
+                    Cell::from(uptime_downtime).style(Style::default().fg(Color::White)),
                     Cell::from(last_check_display).style(
                         Style::default().fg(last_check_color).add_modifier(
                             if flash_intensity > 0.0 {
@@ -772,11 +790,12 @@ impl NetworkMonitorTui {
         let table = Table::new(
             rows,
             [
-                Constraint::Percentage(20),
-                Constraint::Percentage(25),
+                Constraint::Percentage(18),
+                Constraint::Percentage(22),
                 Constraint::Percentage(10),
-                Constraint::Percentage(15),
-                Constraint::Percentage(30),
+                Constraint::Percentage(12),
+                Constraint::Percentage(18),
+                Constraint::Percentage(20),
             ],
         )
         .header(header)
@@ -1467,6 +1486,37 @@ impl NetworkMonitorTui {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )])];
+
+            // Add current status duration
+            if let Ok(Some(duration_ms)) = self.database.get_current_status_duration(node_id) {
+                // Get current status
+                let current_status = self
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == Some(node_id))
+                    .map(|n| n.status)
+                    .unwrap_or(NodeStatus::Offline);
+
+                let status_color = match current_status {
+                    NodeStatus::Online => Color::Green,
+                    NodeStatus::Offline => Color::Red,
+                };
+
+                uptime_lines.push(Line::from(vec![
+                    Span::raw("Time in Current Status ("),
+                    Span::styled(
+                        current_status.to_string(),
+                        Style::default()
+                            .fg(status_color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("): "),
+                    Span::styled(
+                        format_duration(duration_ms),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
 
             for (label, start_time) in periods {
                 if let Ok(uptime_pct) = self

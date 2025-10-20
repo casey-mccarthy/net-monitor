@@ -373,7 +373,7 @@ impl NetworkMonitorApp {
         let mut action = None;
         ScrollArea::vertical().show(ui, |ui| {
             Grid::new("node_list")
-                .num_columns(7)
+                .num_columns(8)
                 .spacing([20.0, 10.0])
                 .striped(true)
                 .show(ui, |ui| {
@@ -381,6 +381,7 @@ impl NetworkMonitorApp {
                     ui.label(RichText::new("Target").strong());
                     ui.label(RichText::new("Type").strong());
                     ui.label(RichText::new("Status").strong());
+                    ui.label(RichText::new("Uptime/Downtime").strong());
                     ui.label(RichText::new("Last Check").strong());
                     ui.label(RichText::new("Connect").strong());
                     ui.label(RichText::new("Actions").strong());
@@ -414,6 +415,17 @@ impl NetworkMonitorApp {
                             NodeStatus::Offline => Color32::RED,
                         };
                         ui.colored_label(status_color, node.status.to_string());
+
+                        // Uptime/Downtime display
+                        let uptime_downtime_str = if let Some(node_id) = node.id {
+                            match self.database.get_current_status_duration(node_id) {
+                                Ok(Some(duration_ms)) => format_duration(duration_ms),
+                                _ => "N/A".to_string(),
+                            }
+                        } else {
+                            "N/A".to_string()
+                        };
+                        ui.label(uptime_downtime_str);
 
                         // Last check with glow effect
                         let last_check_str = node

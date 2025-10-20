@@ -2,6 +2,14 @@
 name = "net-monitor"
 version = "0.17.3"
 edition = "2021"
+authors = ["Casey"]
+description = "A network monitoring tool with GUI and TUI interfaces"
+repository = "https://github.com/casey/net-monitor"
+documentation = "https://casey.github.io/net-monitor"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+keywords = ["network", "monitoring", "gui", "tui"]
+categories = ["command-line-utilities", "network-programming"]
 
 # Default binary with CLI mode selection (backward compatible)
 [[bin]]
