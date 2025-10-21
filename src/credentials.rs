@@ -463,9 +463,14 @@ pub mod ssh_keys {
     /// Discover SSH keys in the standard SSH directory
     #[allow(dead_code)]
     pub fn discover_ssh_keys() -> Result<Vec<PathBuf>> {
-        let ssh_dir = dirs::home_dir()
-            .ok_or_else(|| anyhow!("Could not find home directory"))?
-            .join(".ssh");
+        // Use HOME environment variable if set (for testing), otherwise use dirs::home_dir()
+        let home_dir = std::env::var("HOME")
+            .ok()
+            .and_then(|p| Some(PathBuf::from(p)))
+            .or_else(|| dirs::home_dir())
+            .ok_or_else(|| anyhow!("Could not find home directory"))?;
+
+        let ssh_dir = home_dir.join(".ssh");
 
         if !ssh_dir.exists() {
             return Ok(Vec::new());
