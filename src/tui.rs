@@ -1546,13 +1546,13 @@ impl NetworkMonitorTui {
         }
 
         // Status Change History Section
-        if self.status_changes.is_empty() {
+        if self.status_changes.is_empty() && self.viewing_history_node_id.is_none() {
             let msg = Paragraph::new("No status changes recorded.")
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Gray));
             f.render_widget(msg, chunks[1]);
         } else {
-            let header = Row::new(vec!["Timestamp", "From", "To", "Duration"])
+            let header = Row::new(vec!["Timestamp", "State", "Duration"])
                 .style(
                     Style::default()
                         .fg(Color::Yellow)
@@ -1560,50 +1560,93 @@ impl NetworkMonitorTui {
                 )
                 .bottom_margin(1);
 
-            let rows: Vec<Row> = self
-                .status_changes
-                .iter()
-                .map(|change| {
-                    let timestamp = change
-                        .changed_at
-                        .with_timezone(&chrono::Local)
-                        .format("%Y-%m-%d %H:%M:%S")
-                        .to_string();
+            let mut rows: Vec<Row> = Vec::new();
 
-                    let duration = change
-                        .duration_ms
-                        .map(format_duration)
-                        .unwrap_or_else(|| "N/A".to_string());
+            // Add current state as the first row
+            if let Some(node_id) = self.viewing_history_node_id {
+                // Get current node status
+                let current_status = self
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == Some(node_id))
+                    .map(|n| n.status)
+                    .unwrap_or(NodeStatus::Offline);
 
-                    // Color-code status fields
-                    let from_color = match change.from_status {
-                        NodeStatus::Online => Color::Green,
-                        NodeStatus::Offline => Color::Red,
-                    };
+                // Get current duration
+                let current_duration = self
+                    .database
+                    .get_current_status_duration(node_id)
+                    .ok()
+                    .flatten()
+                    .map(format_duration)
+                    .unwrap_or_else(|| "N/A".to_string());
 
-                    let to_color = match change.to_status {
-                        NodeStatus::Online => Color::Green,
-                        NodeStatus::Offline => Color::Red,
-                    };
+                let status_color = match current_status {
+                    NodeStatus::Online => Color::Green,
+                    NodeStatus::Offline => Color::Red,
+                };
 
-                    Row::new(vec![
-                        Cell::from(timestamp),
-                        Cell::from(change.from_status.to_string())
-                            .style(Style::default().fg(from_color)),
-                        Cell::from(change.to_status.to_string())
-                            .style(Style::default().fg(to_color)),
-                        Cell::from(duration),
-                    ])
-                })
-                .collect();
+                let state_text = if current_status == NodeStatus::Online {
+                    "Up"
+                } else {
+                    "Down"
+                };
+
+                // Add current state row
+                rows.push(Row::new(vec![
+                    Cell::from("Current").style(
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Cell::from(state_text).style(
+                        Style::default()
+                            .fg(status_color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Cell::from(current_duration)
+                        .style(Style::default().add_modifier(Modifier::BOLD)),
+                ]));
+            }
+
+            // Add historical status changes
+            rows.extend(self.status_changes.iter().map(|change| {
+                let timestamp = change
+                    .changed_at
+                    .with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string();
+
+                let duration = change
+                    .duration_ms
+                    .map(format_duration)
+                    .unwrap_or_else(|| "N/A".to_string());
+
+                // Use the to_status to show what state this period was in
+                let status_color = match change.to_status {
+                    NodeStatus::Online => Color::Green,
+                    NodeStatus::Offline => Color::Red,
+                };
+
+                let state_text = if change.to_status == NodeStatus::Online {
+                    "Up"
+                } else {
+                    "Down"
+                };
+
+                Row::new(vec![
+                    Cell::from(timestamp),
+                    Cell::from(state_text).style(Style::default().fg(status_color)),
+                    Cell::from(duration),
+                ])
+            }));
 
             let table = Table::new(
                 rows,
                 [
                     Constraint::Percentage(40),
-                    Constraint::Percentage(15),
-                    Constraint::Percentage(15),
-                    Constraint::Percentage(30),
+                    Constraint::Percentage(20),
+                    Constraint::Percentage(40),
                 ],
             )
             .header(header)
