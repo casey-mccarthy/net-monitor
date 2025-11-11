@@ -466,8 +466,8 @@ pub mod ssh_keys {
         // Use HOME environment variable if set (for testing), otherwise use dirs::home_dir()
         let home_dir = std::env::var("HOME")
             .ok()
-            .and_then(|p| Some(PathBuf::from(p)))
-            .or_else(|| dirs::home_dir())
+            .map(PathBuf::from)
+            .or_else(dirs::home_dir)
             .ok_or_else(|| anyhow!("Could not find home directory"))?;
 
         let ssh_dir = home_dir.join(".ssh");
