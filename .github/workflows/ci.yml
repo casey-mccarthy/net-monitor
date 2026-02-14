@@ -40,22 +40,6 @@ jobs:
         with:
           components: clippy
       
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev \
-            libglib2.0-dev \
-            libcairo2-dev \
-            libpango1.0-dev \
-            libatk1.0-dev \
-            libgdk-pixbuf-2.0-dev \
-            libxcb1-dev \
-            libxrandr-dev \
-            libxi-dev \
-            libgl1-mesa-dev \
-            libasound2-dev
-      
       - name: Cache Rust dependencies
         uses: actions/cache@v4
         with:
@@ -64,7 +48,7 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
-      
+
       - name: Run clippy
         run: |
           # Run clippy and capture warnings
@@ -94,23 +78,6 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       
-      - name: Install system dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev \
-            libglib2.0-dev \
-            libcairo2-dev \
-            libpango1.0-dev \
-            libatk1.0-dev \
-            libgdk-pixbuf-2.0-dev \
-            libxcb1-dev \
-            libxrandr-dev \
-            libxi-dev \
-            libgl1-mesa-dev \
-            libasound2-dev
-      
       - name: Cache Rust dependencies
         uses: actions/cache@v4
         with:
@@ -119,7 +86,7 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-      
+
       - name: Run tests
         run: cargo test
         # Note: Excludes network-tests feature to avoid flaky external dependencies in CI
@@ -135,22 +102,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev \
-            libglib2.0-dev \
-            libcairo2-dev \
-            libpango1.0-dev \
-            libatk1.0-dev \
-            libgdk-pixbuf-2.0-dev \
-            libxcb1-dev \
-            libxrandr-dev \
-            libxi-dev \
-            libgl1-mesa-dev \
-            libasound2-dev
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -210,19 +161,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev \
-            libglib2.0-dev \
-            libcairo2-dev \
-            libpango1.0-dev \
-            libatk1.0-dev \
-            libgdk-pixbuf-2.0-dev \
-            libxcb1-dev \
-            libxrandr-dev \
-            libxi-dev \
-            libgl1-mesa-dev \
-            libasound2-dev
-          
+
           # Install cross-compilation dependencies for Windows target
           if [[ "${{ matrix.target }}" == "x86_64-pc-windows-gnu" ]]; then
             sudo apt-get install -y gcc-mingw-w64-x86-64
@@ -244,53 +183,30 @@ jobs:
           rustc --version
           rustup show
 
-          # Build all binaries with verbose output for better debugging
-          echo "Building net-monitor (CLI with mode selection)..."
+          echo "Building net-monitor..."
           cargo build --release --target ${{ matrix.target }} --bin net-monitor --verbose
 
-          echo "Building net-monitor-gui (GUI only)..."
-          cargo build --release --target ${{ matrix.target }} --bin net-monitor-gui --verbose
-
-          echo "Building net-monitor-tui (TUI only)..."
-          cargo build --release --target ${{ matrix.target }} --bin net-monitor-tui --verbose
-      
-      - name: Verify binaries exist
+      - name: Verify binary exists
         run: |
-          echo "Checking for built binaries..."
-          BINARIES=("net-monitor" "net-monitor-gui" "net-monitor-tui")
-          ALL_FOUND=true
+          echo "Checking for built binary..."
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            BINARY_PATH="target/${{ matrix.target }}/release/net-monitor.exe"
+          else
+            BINARY_PATH="target/${{ matrix.target }}/release/net-monitor"
+          fi
 
-          for BINARY in "${BINARIES[@]}"; do
-            if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-              BINARY_PATH="target/${{ matrix.target }}/release/${BINARY}.exe"
-              if [ -f "$BINARY_PATH" ]; then
-                echo "✓ Binary found: $BINARY_PATH"
-                ls -la "$BINARY_PATH"
-                file "$BINARY_PATH"
-              else
-                echo "✗ Binary not found: $BINARY_PATH"
-                ALL_FOUND=false
-              fi
-            else
-              BINARY_PATH="target/${{ matrix.target }}/release/${BINARY}"
-              if [ -f "$BINARY_PATH" ]; then
-                echo "✓ Binary found: $BINARY_PATH"
-                ls -la "$BINARY_PATH"
-                file "$BINARY_PATH"
-              else
-                echo "✗ Binary not found: $BINARY_PATH"
-                ALL_FOUND=false
-              fi
-            fi
-          done
-
-          if [ "$ALL_FOUND" = false ]; then
+          if [ -f "$BINARY_PATH" ]; then
+            echo "✓ Binary found: $BINARY_PATH"
+            ls -la "$BINARY_PATH"
+            file "$BINARY_PATH"
+          else
+            echo "✗ Binary not found: $BINARY_PATH"
             echo "Contents of release directory:"
             ls -la target/${{ matrix.target }}/release/ || echo "Release directory doesn't exist"
             exit 1
           fi
 
-          echo "All binaries verified successfully!"
+          echo "Binary verified successfully!"
 
   # Security audit
   security-audit:
