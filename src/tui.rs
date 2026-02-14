@@ -749,19 +749,33 @@ impl NetworkMonitorTui {
                     "N/A".to_string()
                 };
 
-                // Create cells with individual styling
+                // Create cells with individual styling using Span::styled
+                // to embed color directly in text content for reliable style updates
                 let cells = vec![
-                    Cell::from(node.name.clone()).style(Style::default().fg(Color::White)),
-                    Cell::from(node.detail.get_connection_target())
-                        .style(Style::default().fg(Color::Cyan)),
-                    Cell::from(node.detail.to_string()).style(Style::default().fg(Color::Yellow)),
-                    Cell::from(status_str).style(
+                    Cell::from(Span::styled(
+                        node.name.clone(),
+                        Style::default().fg(Color::White),
+                    )),
+                    Cell::from(Span::styled(
+                        node.detail.get_connection_target(),
+                        Style::default().fg(Color::Cyan),
+                    )),
+                    Cell::from(Span::styled(
+                        node.detail.to_string(),
+                        Style::default().fg(Color::Yellow),
+                    )),
+                    Cell::from(Span::styled(
+                        status_str,
                         Style::default()
                             .fg(status_color)
                             .add_modifier(Modifier::BOLD),
-                    ),
-                    Cell::from(uptime_downtime).style(Style::default().fg(Color::White)),
-                    Cell::from(last_check_display).style(
+                    )),
+                    Cell::from(Span::styled(
+                        uptime_downtime,
+                        Style::default().fg(Color::White),
+                    )),
+                    Cell::from(Span::styled(
+                        last_check_display,
                         Style::default().fg(last_check_color).add_modifier(
                             if flash_intensity > 0.0 {
                                 Modifier::BOLD
@@ -769,7 +783,7 @@ impl NetworkMonitorTui {
                                 Modifier::empty()
                             },
                         ),
-                    ),
+                    )),
                 ];
 
                 Row::new(cells)
@@ -1594,18 +1608,22 @@ impl NetworkMonitorTui {
 
                 // Add current state row
                 rows.push(Row::new(vec![
-                    Cell::from("Current").style(
+                    Cell::from(Span::styled(
+                        "Current",
                         Style::default()
                             .fg(Color::Cyan)
                             .add_modifier(Modifier::BOLD),
-                    ),
-                    Cell::from(state_text).style(
+                    )),
+                    Cell::from(Span::styled(
+                        state_text,
                         Style::default()
                             .fg(status_color)
                             .add_modifier(Modifier::BOLD),
-                    ),
-                    Cell::from(current_duration)
-                        .style(Style::default().add_modifier(Modifier::BOLD)),
+                    )),
+                    Cell::from(Span::styled(
+                        current_duration,
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
                 ]));
             }
 
@@ -1622,22 +1640,22 @@ impl NetworkMonitorTui {
                     .map(format_duration)
                     .unwrap_or_else(|| "N/A".to_string());
 
-                // Use the to_status to show what state this period was in
-                let status_color = match change.to_status {
+                // Use from_status since duration_ms represents time spent in that state
+                let status_color = match change.from_status {
                     NodeStatus::Online => Color::Green,
                     NodeStatus::Offline => Color::Red,
                 };
 
-                let state_text = if change.to_status == NodeStatus::Online {
+                let state_text = if change.from_status == NodeStatus::Online {
                     "Up"
                 } else {
                     "Down"
                 };
 
                 Row::new(vec![
-                    Cell::from(timestamp),
-                    Cell::from(state_text).style(Style::default().fg(status_color)),
-                    Cell::from(duration),
+                    Cell::from(Span::styled(timestamp, Style::default())),
+                    Cell::from(Span::styled(state_text, Style::default().fg(status_color))),
+                    Cell::from(Span::styled(duration, Style::default())),
                 ])
             }));
 
