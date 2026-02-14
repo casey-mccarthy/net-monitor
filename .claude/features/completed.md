@@ -43,12 +43,11 @@ This document tracks features that have been successfully implemented and releas
 - ICMP ping support
 - Real-time status updates
 
-### GUI Application
+### TUI Application
 - **Released**: 2024-08-01
-- **Description**: Native desktop application
+- **Description**: Terminal-based application
 - Cross-platform support (Windows, macOS, Linux)
-- Clean, intuitive interface
-- System tray integration
+- Clean, intuitive terminal interface
 
 ### Data Persistence
 - **Released**: 2024-08-01

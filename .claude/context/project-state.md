@@ -36,7 +36,7 @@ This document maintains the current state of the net-monitor project for Claude 
 
 ### Core Technologies
 - **Rust**: 2021 Edition
-- **GUI**: egui/eframe
+- **TUI**: ratatui/crossterm
 - **Database**: SQLite via rusqlite
 - **Async**: Tokio runtime
 - **HTTP**: reqwest client
@@ -93,7 +93,7 @@ See `.claude/architecture/database-schema.md` for details.
 
 - Unit tests in source files
 - Integration tests in `tests/`
-- Manual testing for GUI
+- Manual testing for TUI
 - CI runs tests on PR
 
 ## Deployment
@@ -145,7 +145,7 @@ When starting a new Claude session:
 
 - `Cargo.toml` - Dependencies and version
 - `src/main.rs` - Entry point
-- `src/gui.rs` - UI implementation
+- `src/tui.rs` - TUI implementation
 - `src/models.rs` - Data structures
 - `.github/workflows/release.yml` - CI/CD
 

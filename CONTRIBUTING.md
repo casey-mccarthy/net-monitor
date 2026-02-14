@@ -188,7 +188,7 @@ after errors, causing pool exhaustion.
 net-monitor/
 ├── src/              # Source code
 │   ├── main.rs      # Entry point
-│   ├── gui.rs       # UI implementation
+│   ├── tui.rs       # TUI implementation
 │   ├── models.rs    # Data structures
 │   ├── database.rs  # Database layer
 │   ├── monitor.rs   # Monitoring logic

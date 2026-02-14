@@ -58,7 +58,7 @@ cargo build --release
 
 ## Screenshots/Demo
 
-<!-- If this PR includes UI changes (GUI or TUI), add screenshots, GIFs, or videos -->
+<!-- If this PR includes UI changes (TUI), add screenshots, GIFs, or videos -->
 <!-- Delete this section if not applicable -->
 
 ### Before
