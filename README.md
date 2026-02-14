@@ -1,13 +1,11 @@
 # Network Monitor
 
-A robust network monitoring application built with Rust for monitoring HTTP endpoints, network hosts, and TCP connections. Available in both GUI and TUI (Terminal User Interface) modes.
+A robust network monitoring application built with Rust for monitoring HTTP endpoints, network hosts, and TCP connections. Features a terminal user interface (TUI).
 
 ## Features
 
-- **Dual Interface Modes**
-  - GUI mode: Clean, responsive interface built with egui
-  - TUI mode: Terminal-based interface built with ratatui
-  - CLI mode selection with default preferences
+- **Terminal User Interface (TUI)**
+  - Clean, responsive terminal interface built with ratatui
 
 - **Multiple Connection Types**
   - HTTP/HTTPS endpoint monitoring with status code validation
@@ -40,7 +38,7 @@ Download the latest release for your platform from the [Releases page](https://g
 
 **Prerequisites:**
 - Rust 1.70+ (latest stable recommended)
-- Linux only: `libgtk-3-dev` and `libssl-dev`
+- Linux only: `libssl-dev`
 
 **Quick start:**
 ```bash
@@ -54,33 +52,13 @@ For detailed build commands and development workflows, see [CLAUDE.md](CLAUDE.md
 
 ## Usage
 
-### Choosing an Interface Mode
-
-The application supports three binaries:
-
-```bash
-# Main binary - choose mode interactively or via CLI
-net-monitor                    # Default mode or prompt
-net-monitor --mode gui         # Launch in GUI mode
-net-monitor --mode tui         # Launch in TUI mode
-net-monitor --mode gui --save-default  # Set GUI as default
-
-# Dedicated binaries
-net-monitor-gui               # GUI only
-net-monitor-tui               # TUI only
-```
-
 ### Basic Usage
 
-**GUI Mode:**
-1. Launch the application
-2. Click "Add Node" to create a new monitor
-3. Enter name, address/URL, and select connection type (HTTP, TCP, or Ping)
-4. Click "Check Now" for a single check or "Start Monitoring" for continuous monitoring
-5. View real-time status updates in the main window
+```bash
+net-monitor
+```
 
-**TUI Mode:**
-1. Launch with `net-monitor --mode tui` or `net-monitor-tui`
+1. Launch the application
 2. Use arrow keys and Enter to navigate
 3. Press 'a' to add a new node, 's' to start monitoring
 4. Press 'q' to quit
@@ -93,7 +71,7 @@ net-monitor-tui               # TUI only
 
 ### Import/Export
 
-Import and export your monitoring configuration as JSON files. Available in both GUI (File menu) and TUI modes.
+Import and export your monitoring configuration as JSON files.
 
 **Format:**
 ```json
@@ -134,8 +112,7 @@ Import and export your monitoring configuration as JSON files. Available in both
 ```
 
 **Usage:**
-- **GUI Mode**: Use File menu → Import/Export Nodes
-- **TUI Mode**: Press 'i' to import or 'e' to export, then enter file path
+- Press 'i' to import or 'e' to export, then enter file path
 - Files must use `.json` extension
 - Export creates pretty-printed JSON for easy editing
 

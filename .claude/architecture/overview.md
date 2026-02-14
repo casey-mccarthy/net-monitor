@@ -6,8 +6,8 @@ Net-Monitor follows a modular architecture with clear separation of concerns:
 
 ```
 ┌─────────────────────────────────────────┐
-│            GUI Layer (egui)             │
-│  - User Interface                       │
+│           TUI Layer (ratatui)           │
+│  - Terminal User Interface              │
 │  - Event Handling                       │
 │  - Real-time Updates                    │
 └─────────────────────────────────────────┘
@@ -36,8 +36,8 @@ Net-Monitor follows a modular architecture with clear separation of concerns:
 
 ## Component Responsibilities
 
-### GUI Layer (`gui.rs`)
-- Renders the user interface using egui
+### TUI Layer (`tui.rs`)
+- Renders the terminal user interface using ratatui
 - Handles user input and events
 - Displays real-time monitoring status
 - Manages import/export operations
@@ -75,17 +75,17 @@ Net-Monitor follows a modular architecture with clear separation of concerns:
 
 ## Data Flow
 
-1. **User Interaction** → GUI receives input
+1. **User Interaction** → TUI receives input
 2. **Command Processing** → Application core processes request
 3. **Data Operation** → Database read/write as needed
 4. **Monitoring Execution** → Connection strategy executes check
 5. **Result Processing** → Monitor engine processes results
 6. **State Update** → Database stores results
-7. **UI Update** → GUI reflects new state
+7. **UI Update** → TUI reflects new state
 
 ## Concurrency Model
 
-- **Main Thread**: GUI rendering and user interaction
+- **Main Thread**: TUI rendering and user interaction
 - **Tokio Runtime**: Async monitoring operations
 - **Background Tasks**: Periodic monitoring checks
 - **Database Access**: Thread-safe connection pooling
@@ -112,14 +112,14 @@ Net-Monitor follows a modular architecture with clear separation of concerns:
 ### Adding New Connection Types
 1. Implement `ConnectionStrategy` trait
 2. Add variant to `ConnectionType` enum
-3. Update GUI to support configuration
+3. Update TUI to support configuration
 4. Add database migration if needed
 
 ### Adding New Features
 1. Extend models in `models.rs`
 2. Add database migrations
 3. Implement business logic
-4. Update GUI components
+4. Update TUI components
 
 ## Performance Characteristics
 
@@ -132,7 +132,7 @@ Net-Monitor follows a modular architecture with clear separation of concerns:
 ## Technology Stack
 
 - **Language**: Rust 2021 Edition
-- **GUI Framework**: egui/eframe
+- **TUI Framework**: ratatui/crossterm
 - **Async Runtime**: Tokio
 - **Database**: SQLite with rusqlite
 - **HTTP Client**: reqwest
