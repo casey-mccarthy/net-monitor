@@ -148,7 +148,7 @@ jobs:
             name: net-monitor-linux-x64
             archive: net-monitor-v${{ needs.check-version.outputs.new-version }}-linux-x64.tar.gz
           - target: x86_64-apple-darwin
-            os: macos-13  # Use Intel runner for x86_64 target
+            os: macos-latest
             name: net-monitor-macos-x64
             archive: net-monitor-v${{ needs.check-version.outputs.new-version }}-macos-x64.tar.gz
           - target: aarch64-apple-darwin

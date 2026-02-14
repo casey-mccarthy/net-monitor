@@ -189,7 +189,7 @@ jobs:
             os: ubuntu-latest
             name: Linux x64
           - target: x86_64-apple-darwin
-            os: macos-13  # Use Intel runner for x86_64 target
+            os: macos-latest
             name: macOS x64 (Intel)
           - target: aarch64-apple-darwin
             os: macos-latest  # Use latest (ARM64) runner for ARM64 target
@@ -332,8 +332,8 @@ jobs:
     steps:
       - name: Check if all jobs succeeded
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "One or more jobs failed"
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" || "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more jobs failed or were cancelled"
             exit 1
           else
             echo "All jobs succeeded"
