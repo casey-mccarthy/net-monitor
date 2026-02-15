@@ -1696,14 +1696,14 @@ impl NetworkMonitorTui {
                     .map(format_duration)
                     .unwrap_or_else(|| "N/A".to_string());
 
-                // Use from_status since duration_ms represents time spent in that state
-                let status_color = match change.from_status {
+                // Use to_status since changed_at represents when the node transitioned to this state
+                let status_color = match change.to_status {
                     NodeStatus::Online => Color::Green,
                     NodeStatus::Offline => Color::Red,
                     NodeStatus::Degraded => Color::Yellow,
                 };
 
-                let state_text = match change.from_status {
+                let state_text = match change.to_status {
                     NodeStatus::Online => "Up",
                     NodeStatus::Degraded => "Degraded",
                     NodeStatus::Offline => "Down",
