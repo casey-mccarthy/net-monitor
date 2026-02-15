@@ -304,6 +304,7 @@ enum AppState {
     ConfirmDelete,
     ImportNodes,
     ExportNodes,
+    Reorder,
 }
 
 struct MonitoringHandle {
@@ -354,6 +355,9 @@ pub struct NetworkMonitorTui {
     last_blink_time: Instant,
     // Help context
     previous_state: Option<AppState>,
+    // Reorder mode
+    reorder_original_index: Option<usize>,
+    reorder_original_nodes: Option<Vec<Node>>,
 }
 
 impl NetworkMonitorTui {
@@ -403,6 +407,8 @@ impl NetworkMonitorTui {
             cursor_blink_state: true,
             last_blink_time: Instant::now(),
             previous_state: None,
+            reorder_original_index: None,
+            reorder_original_nodes: None,
         };
 
         // Select first node if any exist
@@ -472,7 +478,8 @@ impl NetworkMonitorTui {
 
             // Auto-hide selection highlight after 5 seconds of inactivity
             if let Some(last_input) = self.last_input_time {
-                if now.duration_since(last_input).as_secs() >= 5 {
+                if now.duration_since(last_input).as_secs() >= 5 && self.state != AppState::Reorder
+                {
                     self.last_input_time = None;
                 }
             }
@@ -578,6 +585,11 @@ impl NetworkMonitorTui {
                                     self.state = AppState::Main;
                                 }
                             }
+                            AppState::Reorder => {
+                                if self.handle_reorder_input(key.code) {
+                                    self.state = AppState::Main;
+                                }
+                            }
                         }
                     }
                 }
@@ -589,7 +601,7 @@ impl NetworkMonitorTui {
 
     fn ui(&mut self, f: &mut Frame) {
         match self.state {
-            AppState::Main => self.render_main_view(f),
+            AppState::Main | AppState::Reorder => self.render_main_view(f),
             AppState::AddNode | AppState::EditNode => self.render_node_form(f),
             AppState::ManageCredentials => self.render_credentials_view(f),
             AppState::AddCredential | AppState::EditCredential => self.render_credential_form(f),
@@ -622,38 +634,59 @@ impl NetworkMonitorTui {
         f.render_widget(title, chunks[0]);
 
         // Menu bar
-        let menu_text = vec![
-            Span::raw("["),
-            Span::styled("M", Style::default().fg(Color::Yellow)),
-            Span::raw("]onitor "),
-            Span::raw("["),
-            Span::styled("A", Style::default().fg(Color::Yellow)),
-            Span::raw("]dd "),
-            Span::raw("["),
-            Span::styled("E", Style::default().fg(Color::Yellow)),
-            Span::raw("]dit "),
-            Span::raw("["),
-            Span::styled("D", Style::default().fg(Color::Yellow)),
-            Span::raw("]elete "),
-            Span::raw("["),
-            Span::styled("H", Style::default().fg(Color::Yellow)),
-            Span::raw("]istory "),
-            Span::raw("["),
-            Span::styled("C", Style::default().fg(Color::Yellow)),
-            Span::raw("]redentials "),
-            Span::raw("["),
-            Span::styled("I", Style::default().fg(Color::Yellow)),
-            Span::raw("]mport "),
-            Span::raw("["),
-            Span::styled("X", Style::default().fg(Color::Yellow)),
-            Span::raw("]export "),
-            Span::raw("["),
-            Span::styled("?", Style::default().fg(Color::Yellow)),
-            Span::raw("]Help "),
-            Span::raw("["),
-            Span::styled("Q", Style::default().fg(Color::Yellow)),
-            Span::raw("]uit"),
-        ];
+        let menu_text = if self.state == AppState::Reorder {
+            vec![
+                Span::styled(
+                    "REORDER MODE",
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" - ["),
+                Span::styled("Up/Down", Style::default().fg(Color::Yellow)),
+                Span::raw("] Move ["),
+                Span::styled("R", Style::default().fg(Color::Yellow)),
+                Span::raw("] Confirm ["),
+                Span::styled("Esc", Style::default().fg(Color::Yellow)),
+                Span::raw("] Cancel"),
+            ]
+        } else {
+            vec![
+                Span::raw("["),
+                Span::styled("M", Style::default().fg(Color::Yellow)),
+                Span::raw("]onitor "),
+                Span::raw("["),
+                Span::styled("A", Style::default().fg(Color::Yellow)),
+                Span::raw("]dd "),
+                Span::raw("["),
+                Span::styled("E", Style::default().fg(Color::Yellow)),
+                Span::raw("]dit "),
+                Span::raw("["),
+                Span::styled("D", Style::default().fg(Color::Yellow)),
+                Span::raw("]elete "),
+                Span::raw("["),
+                Span::styled("H", Style::default().fg(Color::Yellow)),
+                Span::raw("]istory "),
+                Span::raw("["),
+                Span::styled("C", Style::default().fg(Color::Yellow)),
+                Span::raw("]redentials "),
+                Span::raw("["),
+                Span::styled("R", Style::default().fg(Color::Yellow)),
+                Span::raw("]eorder "),
+                Span::raw("["),
+                Span::styled("I", Style::default().fg(Color::Yellow)),
+                Span::raw("]mport "),
+                Span::raw("["),
+                Span::styled("X", Style::default().fg(Color::Yellow)),
+                Span::raw("]export "),
+                Span::raw("["),
+                Span::styled("?", Style::default().fg(Color::Yellow)),
+                Span::raw("]Help "),
+                Span::raw("["),
+                Span::styled("Q", Style::default().fg(Color::Yellow)),
+                Span::raw("]uit"),
+            ]
+        };
 
         let content_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -790,15 +823,25 @@ impl NetworkMonitorTui {
             })
             .collect();
 
-        // Conditionally apply gray background highlight based on input activity
-        let highlight_style = if self.last_input_time.is_some() {
+        // Conditionally apply highlight based on mode and input activity
+        let (highlight_style, highlight_symbol) = if self.state == AppState::Reorder {
+            (
+                Style::default()
+                    .bg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+                "<> ",
+            )
+        } else if self.last_input_time.is_some() {
             // Show gray background when there has been recent input
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD)
+            (
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+                ">> ",
+            )
         } else {
             // Hide gray background after 5 seconds of inactivity, but keep >> symbol
-            Style::default()
+            (Style::default(), ">> ")
         };
 
         let table = Table::new(
@@ -815,7 +858,7 @@ impl NetworkMonitorTui {
         .header(header)
         .block(Block::default().borders(Borders::ALL).title("Nodes"))
         .row_highlight_style(highlight_style)
-        .highlight_symbol(">> ");
+        .highlight_symbol(highlight_symbol);
 
         f.render_stateful_widget(table, content_chunks[1], &mut self.table_state);
 
@@ -1728,6 +1771,10 @@ impl NetworkMonitorTui {
                         Span::raw(" - Export nodes to JSON"),
                     ]),
                     Line::from(vec![
+                        Span::styled("r", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Reorder nodes"),
+                    ]),
+                    Line::from(vec![
                         Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
                         Span::raw(" - Navigate nodes"),
                     ]),
@@ -1883,6 +1930,27 @@ impl NetworkMonitorTui {
                     Line::from(vec![
                         Span::styled("N/Esc", Style::default().fg(Color::Yellow)),
                         Span::raw(" - Cancel"),
+                    ]),
+                ],
+            ),
+            Some(AppState::Reorder) => (
+                "Help - Reorder Mode",
+                vec![
+                    Line::from(vec![Span::raw(
+                        "Rearrange nodes by moving the selected node up or down.",
+                    )]),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Move node up/down"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("R", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Confirm new order"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("Esc", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Cancel and restore original order"),
                     ]),
                 ],
             ),
@@ -2093,6 +2161,15 @@ impl NetworkMonitorTui {
                 self.import_export_path.clear();
                 self.state = AppState::ExportNodes;
             }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                if self.nodes.len() > 1 {
+                    if let Some(selected) = self.table_state.selected() {
+                        self.reorder_original_index = Some(selected);
+                        self.reorder_original_nodes = Some(self.nodes.clone());
+                        self.state = AppState::Reorder;
+                    }
+                }
+            }
             KeyCode::Char('?') => {
                 self.previous_state = Some(AppState::Main);
                 self.state = AppState::Help;
@@ -2137,6 +2214,65 @@ impl NetworkMonitorTui {
             _ => {}
         }
         Ok(false)
+    }
+
+    fn handle_reorder_input(&mut self, key: KeyCode) -> bool {
+        self.last_input_time = Some(Instant::now());
+
+        match key {
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                // Confirm: persist order and return to Main
+                self.persist_display_order();
+                self.reorder_original_index = None;
+                self.reorder_original_nodes = None;
+                return true;
+            }
+            KeyCode::Esc => {
+                // Cancel: restore snapshot
+                if let Some(original_nodes) = self.reorder_original_nodes.take() {
+                    self.nodes = original_nodes;
+                }
+                if let Some(original_index) = self.reorder_original_index.take() {
+                    self.table_state.select(Some(original_index));
+                }
+                return true;
+            }
+            KeyCode::Down => {
+                if let Some(selected) = self.table_state.selected() {
+                    if selected < self.nodes.len() - 1 {
+                        self.nodes.swap(selected, selected + 1);
+                        self.table_state.select(Some(selected + 1));
+                    }
+                }
+            }
+            KeyCode::Up => {
+                if let Some(selected) = self.table_state.selected() {
+                    if selected > 0 {
+                        self.nodes.swap(selected, selected - 1);
+                        self.table_state.select(Some(selected - 1));
+                    }
+                }
+            }
+            KeyCode::Char('?') => {
+                self.previous_state = Some(AppState::Reorder);
+                self.state = AppState::Help;
+            }
+            _ => {}
+        }
+        false
+    }
+
+    fn persist_display_order(&self) {
+        let order: Vec<(i64, i64)> = self
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, node)| node.id.map(|id| (id, i as i64)))
+            .collect();
+
+        if let Err(e) = self.database.update_node_display_orders(&order) {
+            error!("Failed to persist display order: {}", e);
+        }
     }
 
     fn handle_node_form_input(&mut self, key: KeyCode, _modifiers: KeyModifiers) -> bool {
@@ -4130,6 +4266,7 @@ mod tests {
             AppState::ConfirmDelete,
             AppState::ImportNodes,
             AppState::ExportNodes,
+            AppState::Reorder,
         ];
 
         for variant in variants {
