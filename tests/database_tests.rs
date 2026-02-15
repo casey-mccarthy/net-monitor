@@ -1093,3 +1093,67 @@ fn test_monitoring_result_not_recorded_on_unchanged_status() {
     assert!(latest.is_some());
     assert_eq!(latest.unwrap().status, NodeStatus::Offline);
 }
+
+// ========== Display Order Tests ==========
+
+#[test]
+fn test_display_order_on_new_nodes() {
+    let test_db = TestDatabase::new();
+
+    // Add nodes in non-alphabetical order
+    let node_c = NodeBuilder::new()
+        .name("Charlie")
+        .http("https://example.com/c", 200)
+        .build();
+    let node_a = NodeBuilder::new()
+        .name("Alpha")
+        .http("https://example.com/a", 200)
+        .build();
+    let node_b = NodeBuilder::new()
+        .name("Bravo")
+        .http("https://example.com/b", 200)
+        .build();
+
+    test_db.db.add_node(&node_c).unwrap();
+    test_db.db.add_node(&node_a).unwrap();
+    test_db.db.add_node(&node_b).unwrap();
+
+    // get_all_nodes should return them in insertion order (display_order)
+    let nodes = test_db.db.get_all_nodes().unwrap();
+    assert_eq!(nodes.len(), 3);
+    assert_eq!(nodes[0].name, "Charlie");
+    assert_eq!(nodes[1].name, "Alpha");
+    assert_eq!(nodes[2].name, "Bravo");
+}
+
+#[test]
+fn test_update_display_orders() {
+    let test_db = TestDatabase::new();
+
+    let node_a = NodeBuilder::new()
+        .name("Alpha")
+        .http("https://example.com/a", 200)
+        .build();
+    let node_b = NodeBuilder::new()
+        .name("Bravo")
+        .http("https://example.com/b", 200)
+        .build();
+    let node_c = NodeBuilder::new()
+        .name("Charlie")
+        .http("https://example.com/c", 200)
+        .build();
+
+    let id_a = test_db.db.add_node(&node_a).unwrap();
+    let id_b = test_db.db.add_node(&node_b).unwrap();
+    let id_c = test_db.db.add_node(&node_c).unwrap();
+
+    // Reverse the order: Charlie, Bravo, Alpha
+    let new_order = vec![(id_c, 0i64), (id_b, 1i64), (id_a, 2i64)];
+    test_db.db.update_node_display_orders(&new_order).unwrap();
+
+    let nodes = test_db.db.get_all_nodes().unwrap();
+    assert_eq!(nodes.len(), 3);
+    assert_eq!(nodes[0].name, "Charlie");
+    assert_eq!(nodes[1].name, "Bravo");
+    assert_eq!(nodes[2].name, "Alpha");
+}

@@ -95,6 +95,9 @@ impl Database {
         // Migrate Unknown status to Offline
         self.migrate_unknown_status(&conn)?;
 
+        // Add display_order column for custom node ordering
+        self.migrate_display_order_column(&conn)?;
+
         Ok(())
     }
 
@@ -194,6 +197,31 @@ impl Database {
         Ok(())
     }
 
+    /// Migrate to add display_order column if it doesn't exist
+    fn migrate_display_order_column(&self, conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(nodes)")?;
+        let column_exists = stmt
+            .query_map([], |row| {
+                let column_name: String = row.get(1)?;
+                Ok(column_name)
+            })?
+            .any(|name| name.unwrap_or_default() == "display_order");
+
+        if !column_exists {
+            conn.execute("ALTER TABLE nodes ADD COLUMN display_order INTEGER", [])?;
+            // Backfill existing rows with alphabetical order
+            conn.execute(
+                "UPDATE nodes SET display_order = (
+                    SELECT COUNT(*) FROM nodes AS n2 WHERE n2.name < nodes.name
+                )",
+                [],
+            )?;
+            info!("Added display_order column to nodes table");
+        }
+
+        Ok(())
+    }
+
     /// Adds a new node to the database
     pub fn add_node(&self, node: &Node) -> Result<i64> {
         // Validate: HTTP nodes cannot have credentials (SSH-only feature)
@@ -224,8 +252,9 @@ impl Database {
             "INSERT INTO nodes (
                 name, monitor_type, status, last_check, response_time, monitoring_interval,
                 credential_id, http_url, http_expected_status, ping_host, ping_count, ping_timeout,
-                tcp_host, tcp_port, tcp_timeout
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                tcp_host, tcp_port, tcp_timeout, display_order
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                (SELECT COALESCE(MAX(display_order), -1) + 1 FROM nodes))",
             params![
                 node.name,
                 monitor_type,
@@ -309,12 +338,26 @@ impl Database {
             "SELECT id, name, monitor_type, status, last_check, response_time, monitoring_interval,
                     credential_id, http_url, http_expected_status, ping_host, ping_count, ping_timeout,
                     tcp_host, tcp_port, tcp_timeout
-             FROM nodes ORDER BY name",
+             FROM nodes ORDER BY display_order, name",
         )?;
         let nodes = stmt.query_map([], |row| self.row_to_node(row))?;
         nodes
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(Into::into)
+    }
+
+    /// Updates display_order for multiple nodes atomically
+    pub fn update_node_display_orders(&self, order: &[(i64, i64)]) -> Result<()> {
+        let conn = self.get_connection()?;
+        let tx = conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare("UPDATE nodes SET display_order = ?1 WHERE id = ?2")?;
+            for &(node_id, new_order) in order {
+                stmt.execute(params![new_order, node_id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Deletes a node from the database
