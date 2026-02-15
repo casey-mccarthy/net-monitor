@@ -86,6 +86,9 @@ fn test_node_creation() {
         response_time: Some(150),
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     assert_eq!(node.id, Some(1));
@@ -111,6 +114,9 @@ fn test_node_serialization() {
         response_time: Some(150),
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let serialized = serde_json::to_string(&node).unwrap();
@@ -152,6 +158,8 @@ fn test_node_import_creation() {
         },
         monitoring_interval: 60,
         credential_id: None,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     assert_eq!(node_import.name, "Test Node");
@@ -169,6 +177,8 @@ fn test_node_import_serialization() {
         },
         monitoring_interval: 60,
         credential_id: None,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let serialized = serde_json::to_string(&node_import).unwrap();
@@ -514,6 +524,9 @@ fn test_node_with_tcp_detail() {
         response_time: None,
         monitoring_interval: 30,
         credential_id: Some("cred_123".to_string()),
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     assert_eq!(node.name, "TCP Node");
@@ -536,6 +549,9 @@ fn test_node_without_optional_fields() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     assert!(node.id.is_none());
@@ -558,6 +574,9 @@ fn test_node_clone() {
         response_time: Some(100),
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
     let cloned = original.clone();
     assert_eq!(cloned.id, original.id);
@@ -579,6 +598,9 @@ fn test_node_debug() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
     let debug_str = format!("{:?}", node);
     assert!(debug_str.contains("Node"));
@@ -599,6 +621,9 @@ fn test_node_partial_eq() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let node2 = Node {
@@ -613,6 +638,9 @@ fn test_node_partial_eq() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     assert_eq!(node1, node2);
@@ -631,6 +659,8 @@ fn test_node_import_with_tcp() {
         },
         monitoring_interval: 30,
         credential_id: Some("cred_abc".to_string()),
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     assert_eq!(import.name, "TCP Import");
@@ -648,6 +678,8 @@ fn test_node_import_clone() {
         },
         monitoring_interval: 60,
         credential_id: None,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
     let cloned = original.clone();
     assert_eq!(cloned.name, original.name);
@@ -664,6 +696,8 @@ fn test_node_import_debug() {
         },
         monitoring_interval: 120,
         credential_id: None,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
     let debug_str = format!("{:?}", import);
     assert!(debug_str.contains("NodeImport"));

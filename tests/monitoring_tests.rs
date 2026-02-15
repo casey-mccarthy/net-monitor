@@ -209,6 +209,9 @@ fn create_test_http_node() -> Node {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     }
 }
 
@@ -241,6 +244,9 @@ async fn test_check_node_http_failure() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let result = check_node(&node).await;
@@ -267,6 +273,9 @@ async fn test_check_node_invalid_url() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let result = check_node(&node).await;
@@ -384,6 +393,9 @@ async fn test_tcp_monitoring_success() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let node_id = test_db.db.add_node(&node).unwrap();
@@ -424,6 +436,9 @@ async fn test_tcp_monitoring_failure() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let node_id = test_db.db.add_node(&node).unwrap();
@@ -459,6 +474,9 @@ async fn test_tcp_monitoring_localhost() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let node_id = test_db.db.add_node(&node).unwrap();
@@ -492,6 +510,9 @@ async fn test_tcp_monitoring_workflow() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     // Add node to database
@@ -531,6 +552,9 @@ async fn test_check_http_with_timeout() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     // This should timeout or fail
@@ -559,6 +583,9 @@ async fn test_check_tcp_multiple_addresses() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let result = check_node(&node).await;
@@ -584,6 +611,9 @@ async fn test_check_tcp_connection_refused() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let result = check_node(&node).await;
@@ -610,6 +640,9 @@ async fn test_check_ping_invalid_format() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let result = check_node(&node).await;
@@ -656,6 +689,9 @@ async fn test_check_tcp_short_timeout() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let result = check_node(&node).await;
@@ -679,6 +715,9 @@ async fn test_check_ping_short_timeout() {
         response_time: None,
         monitoring_interval: 60,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let result = check_node(&node).await;

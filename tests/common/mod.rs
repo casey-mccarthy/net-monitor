@@ -42,6 +42,9 @@ pub struct NodeBuilder {
     monitoring_interval: u64,
     credential_id: Option<String>,
     id: Option<i64>,
+    consecutive_failures: u32,
+    max_check_attempts: u32,
+    retry_interval: u64,
 }
 
 impl NodeBuilder {
@@ -56,6 +59,9 @@ impl NodeBuilder {
             monitoring_interval: 60,
             credential_id: None,
             id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         }
     }
 
@@ -103,6 +109,9 @@ impl NodeBuilder {
             response_time: self.response_time,
             monitoring_interval: self.monitoring_interval,
             credential_id: self.credential_id,
+            consecutive_failures: self.consecutive_failures,
+            max_check_attempts: self.max_check_attempts,
+            retry_interval: self.retry_interval,
         }
     }
 }
@@ -161,6 +170,9 @@ pub mod fixtures {
             response_time: Some(150),
             monitoring_interval: 60,
             credential_id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         }
     }
 
@@ -180,6 +192,9 @@ pub mod fixtures {
             response_time: None,
             monitoring_interval: 30,
             credential_id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         }
     }
 }

@@ -59,8 +59,10 @@ impl fmt::Display for MonitorDetail {
 pub enum NodeStatus {
     /// Node is online and responding
     Online,
-    /// Node is offline or not responding
+    /// Node is offline or not responding (confirmed after max_check_attempts)
     Offline,
+    /// Node is failing checks but not yet confirmed down (soft state)
+    Degraded,
 }
 
 impl fmt::Display for NodeStatus {
@@ -68,9 +70,16 @@ impl fmt::Display for NodeStatus {
         match self {
             NodeStatus::Online => write!(f, "Online"),
             NodeStatus::Offline => write!(f, "Offline"),
+            NodeStatus::Degraded => write!(f, "Degraded"),
         }
     }
 }
+
+/// Default number of consecutive failures before confirming offline
+pub const DEFAULT_MAX_CHECK_ATTEMPTS: u32 = 3;
+
+/// Default retry interval in seconds when in degraded state
+pub const DEFAULT_RETRY_INTERVAL: u64 = 15;
 
 /// Represents a network node to be monitored
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -91,6 +100,23 @@ pub struct Node {
     pub monitoring_interval: u64,
     /// Optional credential reference for connections
     pub credential_id: Option<CredentialId>,
+    /// Number of consecutive failures (resets on success)
+    #[serde(default)]
+    pub consecutive_failures: u32,
+    /// How many consecutive failures before confirming offline (soft -> hard)
+    #[serde(default = "default_max_check_attempts")]
+    pub max_check_attempts: u32,
+    /// Retry interval in seconds when in degraded state (shorter than monitoring_interval)
+    #[serde(default = "default_retry_interval")]
+    pub retry_interval: u64,
+}
+
+fn default_max_check_attempts() -> u32 {
+    DEFAULT_MAX_CHECK_ATTEMPTS
+}
+
+fn default_retry_interval() -> u64 {
+    DEFAULT_RETRY_INTERVAL
 }
 
 /// Represents a historical monitoring result
@@ -121,6 +147,12 @@ pub struct NodeImport {
     pub monitoring_interval: u64,
     /// Optional credential reference for connections
     pub credential_id: Option<CredentialId>,
+    /// How many consecutive failures before confirming offline
+    #[serde(default = "default_max_check_attempts")]
+    pub max_check_attempts: u32,
+    /// Retry interval in seconds when in degraded state
+    #[serde(default = "default_retry_interval")]
+    pub retry_interval: u64,
 }
 
 /// Represents a status change event for a node
@@ -152,6 +184,8 @@ impl StatusChange {
         matches!(
             (self.from_status, self.to_status),
             (NodeStatus::Online, NodeStatus::Offline)
+                | (NodeStatus::Online, NodeStatus::Degraded)
+                | (NodeStatus::Degraded, NodeStatus::Offline)
         )
     }
 
@@ -160,7 +194,7 @@ impl StatusChange {
     pub fn is_recovery(&self) -> bool {
         matches!(
             (self.from_status, self.to_status),
-            (NodeStatus::Offline, NodeStatus::Online)
+            (NodeStatus::Offline, NodeStatus::Online) | (NodeStatus::Degraded, NodeStatus::Online)
         )
     }
 

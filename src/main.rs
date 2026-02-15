@@ -4,6 +4,7 @@ mod credentials;
 mod database;
 mod models;
 mod monitor;
+mod monitoring_engine;
 mod tui;
 
 use crate::database::Database;

@@ -279,7 +279,7 @@ impl AuthenticatedConnectionStrategy for SshConnectionStrategy {
 
                 if args.contains(&"bash") {
                     // For terminals that use bash -c, we need to keep the terminal open
-                    cmd.arg(&format!(
+                    cmd.arg(format!(
                         "{}; read -p 'Press Enter to close...'",
                         ssh_command_str
                     ));

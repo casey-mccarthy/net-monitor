@@ -77,6 +77,9 @@ fn test_database_integration() {
         response_time: None,
         monitoring_interval: 5,
         credential_id: None,
+        consecutive_failures: 0,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let node_id = database.add_node(&node).expect("Failed to add node");
