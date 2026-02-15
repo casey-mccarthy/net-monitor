@@ -2,7 +2,7 @@ use crate::connection::ConnectionStrategy;
 use crate::credentials::{CredentialStore, CredentialSummary, FileCredentialStore};
 use crate::database::Database;
 use crate::models::{MonitorDetail, Node, NodeImport, NodeStatus, StatusChange};
-use crate::monitor::check_node;
+use crate::monitoring_engine::{self, MonitoringHandle, NodeConfigUpdate};
 use anyhow::Result;
 use chrono::Utc;
 use crossterm::{
@@ -27,7 +27,6 @@ use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{error, info};
 
@@ -305,18 +304,6 @@ enum AppState {
     ImportNodes,
     ExportNodes,
     Reorder,
-}
-
-struct MonitoringHandle {
-    stop_tx: mpsc::Sender<()>,
-    config_tx: mpsc::Sender<NodeConfigUpdate>,
-}
-
-#[derive(Clone)]
-enum NodeConfigUpdate {
-    Add(Node),
-    Update(Node),
-    Delete(i64),
 }
 
 pub struct NetworkMonitorTui {
@@ -737,12 +724,14 @@ impl NetworkMonitorTui {
                 let status_color = match node.status {
                     NodeStatus::Online => Color::Green,
                     NodeStatus::Offline => Color::Red,
+                    NodeStatus::Degraded => Color::Yellow,
                 };
 
                 // Add visual indicator for status
                 let status_str = match node.status {
                     NodeStatus::Online => "● Online",
                     NodeStatus::Offline => "● Offline",
+                    NodeStatus::Degraded => "◐ Degraded",
                 };
 
                 let last_check = node
@@ -767,6 +756,7 @@ impl NetworkMonitorTui {
                     match node.status {
                         NodeStatus::Online => Color::Green,
                         NodeStatus::Offline => Color::Red,
+                        NodeStatus::Degraded => Color::Yellow,
                     }
                 } else {
                     Color::White
@@ -869,18 +859,39 @@ impl NetworkMonitorTui {
             Span::styled("Monitoring: OFF", Style::default().fg(Color::Red))
         };
 
-        let node_stats = format!(
-            " | {} nodes | {} online, {} offline",
-            self.nodes.len(),
-            self.nodes
-                .iter()
-                .filter(|n| n.status == NodeStatus::Online)
-                .count(),
-            self.nodes
-                .iter()
-                .filter(|n| n.status == NodeStatus::Offline)
-                .count()
-        );
+        let degraded_count = self
+            .nodes
+            .iter()
+            .filter(|n| n.status == NodeStatus::Degraded)
+            .count();
+        let node_stats = if degraded_count > 0 {
+            format!(
+                " | {} nodes | {} online, {} degraded, {} offline",
+                self.nodes.len(),
+                self.nodes
+                    .iter()
+                    .filter(|n| n.status == NodeStatus::Online)
+                    .count(),
+                degraded_count,
+                self.nodes
+                    .iter()
+                    .filter(|n| n.status == NodeStatus::Offline)
+                    .count()
+            )
+        } else {
+            format!(
+                " | {} nodes | {} online, {} offline",
+                self.nodes.len(),
+                self.nodes
+                    .iter()
+                    .filter(|n| n.status == NodeStatus::Online)
+                    .count(),
+                self.nodes
+                    .iter()
+                    .filter(|n| n.status == NodeStatus::Offline)
+                    .count()
+            )
+        };
 
         let mut status_line = vec![monitoring_status, Span::raw(node_stats)];
 
@@ -1557,6 +1568,7 @@ impl NetworkMonitorTui {
                 let status_color = match current_status {
                     NodeStatus::Online => Color::Green,
                     NodeStatus::Offline => Color::Red,
+                    NodeStatus::Degraded => Color::Yellow,
                 };
 
                 uptime_lines.push(Line::from(vec![
@@ -1641,12 +1653,13 @@ impl NetworkMonitorTui {
                 let status_color = match current_status {
                     NodeStatus::Online => Color::Green,
                     NodeStatus::Offline => Color::Red,
+                    NodeStatus::Degraded => Color::Yellow,
                 };
 
-                let state_text = if current_status == NodeStatus::Online {
-                    "Up"
-                } else {
-                    "Down"
+                let state_text = match current_status {
+                    NodeStatus::Online => "Up",
+                    NodeStatus::Degraded => "Degraded",
+                    NodeStatus::Offline => "Down",
                 };
 
                 // Add current state row
@@ -1687,12 +1700,13 @@ impl NetworkMonitorTui {
                 let status_color = match change.from_status {
                     NodeStatus::Online => Color::Green,
                     NodeStatus::Offline => Color::Red,
+                    NodeStatus::Degraded => Color::Yellow,
                 };
 
-                let state_text = if change.from_status == NodeStatus::Online {
-                    "Up"
-                } else {
-                    "Down"
+                let state_text = match change.from_status {
+                    NodeStatus::Online => "Up",
+                    NodeStatus::Degraded => "Degraded",
+                    NodeStatus::Offline => "Down",
                 };
 
                 Row::new(vec![
@@ -2870,6 +2884,9 @@ impl NetworkMonitorTui {
                     response_time: None,
                     monitoring_interval: self.node_form.monitoring_interval.parse().unwrap_or(5),
                     credential_id: self.node_form.credential_id.clone(),
+                    consecutive_failures: 0,
+                    max_check_attempts: crate::models::DEFAULT_MAX_CHECK_ATTEMPTS,
+                    retry_interval: crate::models::DEFAULT_RETRY_INTERVAL,
                 };
 
                 match self.database.add_node(&node) {
@@ -3011,161 +3028,12 @@ impl NetworkMonitorTui {
     }
 
     fn start_monitoring(&mut self) {
-        info!("Starting monitoring thread");
-        let (stop_tx, stop_rx) = mpsc::channel();
-        let (config_tx, config_rx) = mpsc::channel();
-        let db = self.database.clone();
-        let update_tx = self.update_tx.clone();
-
-        let initial_nodes = self.nodes.clone();
-
-        thread::spawn(move || {
-            let mut last_check_times: HashMap<i64, Instant> = HashMap::new();
-            // Initialize previous_statuses with actual last known status from database
-            // This prevents recording duplicate entries when the app restarts
-            let mut previous_statuses: HashMap<i64, NodeStatus> = initial_nodes
-                .iter()
-                .filter_map(|n| {
-                    n.id.and_then(|id| {
-                        // Try to get the last monitoring result from database
-                        db.get_latest_monitoring_result(id)
-                            .ok()
-                            .flatten()
-                            .map(|result| (id, result.status))
-                            // If no previous result, use the node's current status
-                            .or(Some((id, n.status)))
-                    })
-                })
-                .collect();
-            let mut last_status_change_times: HashMap<i64, chrono::DateTime<Utc>> = HashMap::new();
-            let mut current_nodes = initial_nodes.clone();
-            let runtime = tokio::runtime::Runtime::new().unwrap();
-
-            loop {
-                // Check for configuration updates
-                while let Ok(config_update) = config_rx.try_recv() {
-                    match config_update {
-                        NodeConfigUpdate::Add(node) => {
-                            if !current_nodes.iter().any(|n| n.id == node.id) {
-                                // Initialize new node's previous status from database or use current status
-                                if let Some(node_id) = node.id {
-                                    let status = db
-                                        .get_latest_monitoring_result(node_id)
-                                        .ok()
-                                        .flatten()
-                                        .map(|result| result.status)
-                                        .unwrap_or(node.status);
-                                    previous_statuses.insert(node_id, status);
-                                }
-                                current_nodes.push(node);
-                            }
-                        }
-                        NodeConfigUpdate::Update(updated_node) => {
-                            if let Some(node) =
-                                current_nodes.iter_mut().find(|n| n.id == updated_node.id)
-                            {
-                                let status = node.status;
-                                let last_check = node.last_check;
-                                let response_time = node.response_time;
-
-                                *node = updated_node;
-                                node.status = status;
-                                node.last_check = last_check;
-                                node.response_time = response_time;
-
-                                if let Some(node_id) = node.id {
-                                    last_check_times.remove(&node_id);
-                                }
-                            }
-                        }
-                        NodeConfigUpdate::Delete(node_id) => {
-                            current_nodes.retain(|n| n.id != Some(node_id));
-                            last_check_times.remove(&node_id);
-                            previous_statuses.remove(&node_id);
-                            last_status_change_times.remove(&node_id);
-                        }
-                    }
-                }
-
-                for node in &mut current_nodes {
-                    let node_id = node.id.unwrap_or(0);
-                    if node_id == 0 {
-                        continue;
-                    }
-
-                    let now = Instant::now();
-                    let should_check = last_check_times.get(&node_id).is_none_or(|last_check| {
-                        now.duration_since(*last_check).as_secs() >= node.monitoring_interval
-                    });
-
-                    if should_check {
-                        last_check_times.insert(node_id, now);
-                        let previous_status = previous_statuses.get(&node_id).cloned();
-                        let result = runtime.block_on(check_node(node));
-
-                        if let Ok(mut check_result) = result {
-                            let new_status = check_result.status;
-
-                            if let Some(prev_status) = previous_status {
-                                if prev_status != new_status {
-                                    let current_time = Utc::now();
-                                    let duration_ms =
-                                        last_status_change_times.get(&node_id).map(|last_change| {
-                                            StatusChange::calculate_duration(
-                                                *last_change,
-                                                current_time,
-                                            )
-                                        });
-
-                                    let status_change = StatusChange {
-                                        id: None,
-                                        node_id,
-                                        from_status: prev_status,
-                                        to_status: new_status,
-                                        changed_at: current_time,
-                                        duration_ms,
-                                    };
-
-                                    let _ = db.add_status_change(&status_change);
-                                    last_status_change_times.insert(node_id, current_time);
-                                }
-                            }
-
-                            previous_statuses.insert(node_id, new_status);
-                            node.status = check_result.status;
-                            node.last_check = Some(check_result.timestamp);
-                            node.response_time = check_result.response_time;
-                            check_result.node_id = node_id;
-
-                            let _ = db.update_node(node);
-
-                            // Only record monitoring result if status changed
-                            // This prevents spam when app restarts with unchanged status
-                            if let Some(prev_status) = previous_status {
-                                if prev_status != new_status {
-                                    let _ = db.add_monitoring_result(&check_result);
-                                }
-                            } else {
-                                // First check ever for this node, record it
-                                let _ = db.add_monitoring_result(&check_result);
-                            }
-
-                            if update_tx.send(node.clone()).is_err() {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // Check for stop signal
-                match stop_rx.recv_timeout(Duration::from_secs(1)) {
-                    Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                }
-            }
-        });
-
-        self.monitoring_handle = Some(MonitoringHandle { stop_tx, config_tx });
+        let handle = monitoring_engine::start_monitoring(
+            self.database.clone(),
+            self.nodes.clone(),
+            self.update_tx.clone(),
+        );
+        self.monitoring_handle = Some(handle);
         self.set_status_message("Monitoring started");
     }
 
@@ -3193,6 +3061,9 @@ impl NetworkMonitorTui {
                             response_time: None,
                             monitoring_interval: import.monitoring_interval,
                             credential_id: import.credential_id,
+                            consecutive_failures: 0,
+                            max_check_attempts: import.max_check_attempts,
+                            retry_interval: import.retry_interval,
                         };
                         if let Ok(id) = self.database.add_node(&node) {
                             node.id = Some(id);
@@ -3225,6 +3096,8 @@ impl NetworkMonitorTui {
                 detail: node.detail.clone(),
                 monitoring_interval: node.monitoring_interval,
                 credential_id: node.credential_id.clone(),
+                max_check_attempts: node.max_check_attempts,
+                retry_interval: node.retry_interval,
             })
             .collect();
 
@@ -3361,6 +3234,9 @@ mod tests {
             response_time: None,
             monitoring_interval: 5,
             credential_id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         };
 
         database.add_node(&node).expect("Failed to add node");
@@ -3688,6 +3564,9 @@ mod tests {
             response_time: None,
             monitoring_interval: 10,
             credential_id: Some("cred123".to_string()),
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         };
 
         let form = NodeForm::from_node(&node);
@@ -3714,6 +3593,9 @@ mod tests {
             response_time: None,
             monitoring_interval: 15,
             credential_id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         };
 
         let form = NodeForm::from_node(&node);
@@ -3741,6 +3623,9 @@ mod tests {
             response_time: None,
             monitoring_interval: 20,
             credential_id: Some("ssh_key".to_string()),
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         };
 
         let form = NodeForm::from_node(&node);
@@ -3948,6 +3833,9 @@ mod tests {
             response_time: None,
             monitoring_interval: 5,
             credential_id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         };
 
         let update = NodeConfigUpdate::Add(node.clone());
@@ -3978,6 +3866,9 @@ mod tests {
             response_time: None,
             monitoring_interval: 10,
             credential_id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         };
 
         let update = NodeConfigUpdate::Update(node);
@@ -4016,6 +3907,9 @@ mod tests {
             response_time: None,
             monitoring_interval: 30,
             credential_id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         };
 
         let form = NodeForm::from_node(&node);
@@ -4290,6 +4184,9 @@ mod tests {
             response_time: Some(150),
             monitoring_interval: 7,
             credential_id: Some("cred999".to_string()),
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         };
 
         // Convert to form and back
@@ -4328,6 +4225,9 @@ mod tests {
             response_time: None,
             monitoring_interval: 15,
             credential_id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         };
 
         let form = NodeForm::from_node(&original_node);
@@ -4362,6 +4262,9 @@ mod tests {
             response_time: Some(25),
             monitoring_interval: 60,
             credential_id: Some("db_cred".to_string()),
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
         };
 
         let form = NodeForm::from_node(&original_node);

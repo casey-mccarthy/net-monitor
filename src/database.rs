@@ -98,6 +98,9 @@ impl Database {
         // Add display_order column for custom node ordering
         self.migrate_display_order_column(&conn)?;
 
+        // Add retry tracking columns
+        self.migrate_retry_columns(&conn)?;
+
         Ok(())
     }
 
@@ -222,6 +225,50 @@ impl Database {
         Ok(())
     }
 
+    /// Migrate to add retry tracking columns if they don't exist
+    fn migrate_retry_columns(&self, conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(nodes)")?;
+        let existing_columns: Vec<String> = stmt
+            .query_map([], |row| {
+                let column_name: String = row.get(1)?;
+                Ok(column_name)
+            })?
+            .filter_map(|name| name.ok())
+            .collect();
+
+        if !existing_columns.contains(&"consecutive_failures".to_string()) {
+            conn.execute(
+                "ALTER TABLE nodes ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+            info!("Added consecutive_failures column to nodes table");
+        }
+
+        if !existing_columns.contains(&"max_check_attempts".to_string()) {
+            conn.execute(
+                "ALTER TABLE nodes ADD COLUMN max_check_attempts INTEGER NOT NULL DEFAULT 3",
+                [],
+            )?;
+            info!("Added max_check_attempts column to nodes table");
+        }
+
+        if !existing_columns.contains(&"retry_interval".to_string()) {
+            conn.execute(
+                "ALTER TABLE nodes ADD COLUMN retry_interval INTEGER NOT NULL DEFAULT 15",
+                [],
+            )?;
+            info!("Added retry_interval column to nodes table");
+        }
+
+        // Migrate Degraded status to Offline for any leftover from interrupted runs
+        conn.execute(
+            "UPDATE nodes SET status = 'Offline', consecutive_failures = 0 WHERE status = 'Degraded'",
+            [],
+        )?;
+
+        Ok(())
+    }
+
     /// Adds a new node to the database
     pub fn add_node(&self, node: &Node) -> Result<i64> {
         // Validate: HTTP nodes cannot have credentials (SSH-only feature)
@@ -252,9 +299,10 @@ impl Database {
             "INSERT INTO nodes (
                 name, monitor_type, status, last_check, response_time, monitoring_interval,
                 credential_id, http_url, http_expected_status, ping_host, ping_count, ping_timeout,
-                tcp_host, tcp_port, tcp_timeout, display_order
+                tcp_host, tcp_port, tcp_timeout, display_order,
+                consecutive_failures, max_check_attempts, retry_interval
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                (SELECT COALESCE(MAX(display_order), -1) + 1 FROM nodes))",
+                (SELECT COALESCE(MAX(display_order), -1) + 1 FROM nodes), ?16, ?17, ?18)",
             params![
                 node.name,
                 monitor_type,
@@ -271,6 +319,9 @@ impl Database {
                 tcp_host,
                 tcp_port,
                 tcp_timeout,
+                node.consecutive_failures,
+                node.max_check_attempts,
+                node.retry_interval,
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -307,8 +358,9 @@ impl Database {
                 name = ?1, monitor_type = ?2, status = ?3, last_check = ?4, response_time = ?5,
                 monitoring_interval = ?6, credential_id = ?7, http_url = ?8, http_expected_status = ?9,
                 ping_host = ?10, ping_count = ?11, ping_timeout = ?12,
-                tcp_host = ?13, tcp_port = ?14, tcp_timeout = ?15
-            WHERE id = ?16",
+                tcp_host = ?13, tcp_port = ?14, tcp_timeout = ?15,
+                consecutive_failures = ?16, max_check_attempts = ?17, retry_interval = ?18
+            WHERE id = ?19",
             params![
                 node.name,
                 monitor_type,
@@ -325,6 +377,9 @@ impl Database {
                 tcp_host,
                 tcp_port,
                 tcp_timeout,
+                node.consecutive_failures,
+                node.max_check_attempts,
+                node.retry_interval,
                 node.id,
             ],
         )?;
@@ -337,7 +392,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, name, monitor_type, status, last_check, response_time, monitoring_interval,
                     credential_id, http_url, http_expected_status, ping_host, ping_count, ping_timeout,
-                    tcp_host, tcp_port, tcp_timeout
+                    tcp_host, tcp_port, tcp_timeout, consecutive_failures, max_check_attempts, retry_interval
              FROM nodes ORDER BY display_order, name",
         )?;
         let nodes = stmt.query_map([], |row| self.row_to_node(row))?;
@@ -660,6 +715,9 @@ impl Database {
             response_time: row.get("response_time")?,
             monitoring_interval: row.get("monitoring_interval")?,
             credential_id: row.get("credential_id")?,
+            consecutive_failures: row.get("consecutive_failures").unwrap_or(0),
+            max_check_attempts: row.get("max_check_attempts").unwrap_or(3),
+            retry_interval: row.get("retry_interval").unwrap_or(15),
         })
     }
 
@@ -781,6 +839,7 @@ impl std::str::FromStr for NodeStatus {
         match s {
             "Online" => Ok(NodeStatus::Online),
             "Offline" => Ok(NodeStatus::Offline),
+            "Degraded" => Ok(NodeStatus::Degraded),
             _ => Ok(NodeStatus::Offline), // Default to Offline for unknown strings
         }
     }

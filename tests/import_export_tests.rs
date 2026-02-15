@@ -17,6 +17,8 @@ fn test_node_import_export_workflow() {
         detail: node.detail.clone(),
         monitoring_interval: node.monitoring_interval,
         credential_id: None,
+        max_check_attempts: node.max_check_attempts,
+        retry_interval: node.retry_interval,
     };
 
     // Serialize to JSON
@@ -39,6 +41,9 @@ fn test_node_import_export_workflow() {
         response_time: None,
         monitoring_interval: imported_node.monitoring_interval,
         credential_id: imported_node.credential_id,
+        consecutive_failures: 0,
+        max_check_attempts: imported_node.max_check_attempts,
+        retry_interval: imported_node.retry_interval,
     };
 
     let new_node_id = test_db.db.add_node(&new_node).unwrap();
@@ -70,6 +75,8 @@ fn test_export_multiple_nodes_to_json() {
             detail: n.detail.clone(),
             monitoring_interval: n.monitoring_interval,
             credential_id: n.credential_id.clone(),
+            max_check_attempts: n.max_check_attempts,
+            retry_interval: n.retry_interval,
         })
         .collect();
 
@@ -127,6 +134,9 @@ fn test_import_nodes_from_json() {
             response_time: None,
             monitoring_interval: import.monitoring_interval,
             credential_id: import.credential_id,
+            consecutive_failures: 0,
+            max_check_attempts: import.max_check_attempts,
+            retry_interval: import.retry_interval,
         };
         test_db.db.add_node(&node).unwrap();
     }
@@ -153,6 +163,8 @@ fn test_node_import_preserves_detail_types() {
         detail: http_node.detail.clone(),
         monitoring_interval: http_node.monitoring_interval,
         credential_id: None,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let http_json = serde_json::to_string(&http_import).unwrap();
@@ -166,6 +178,8 @@ fn test_node_import_preserves_detail_types() {
         detail: ping_node.detail.clone(),
         monitoring_interval: ping_node.monitoring_interval,
         credential_id: None,
+        max_check_attempts: 3,
+        retry_interval: 15,
     };
 
     let ping_json = serde_json::to_string(&ping_import).unwrap();
