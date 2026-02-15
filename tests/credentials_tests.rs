@@ -6,7 +6,13 @@ use net_monitor::credentials::{
     StoredCredential,
 };
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tempfile::TempDir;
+
+// Mutex to serialize tests that mutate the HOME environment variable.
+// std::env::set_var is process-global and not thread-safe, so tests that
+// modify HOME must not run concurrently.
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
 // ========== SensitiveString Tests ==========
 
@@ -334,6 +340,7 @@ fn test_file_credential_store_new() {
 #[test]
 fn test_file_credential_store_store_and_retrieve() {
     let temp_dir = TempDir::new().unwrap();
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     // May fail if credentials file exists from previous test
@@ -368,6 +375,7 @@ fn test_file_credential_store_store_and_retrieve() {
 #[test]
 fn test_file_credential_store_list() {
     let temp_dir = TempDir::new().unwrap();
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     let store_result = FileCredentialStore::new("test_password".to_string());
@@ -394,6 +402,7 @@ fn test_file_credential_store_list() {
 #[test]
 fn test_file_credential_store_update() {
     let temp_dir = TempDir::new().unwrap();
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     let store_result = FileCredentialStore::new("test_password".to_string());
@@ -430,6 +439,7 @@ fn test_file_credential_store_update() {
 #[test]
 fn test_file_credential_store_delete() {
     let temp_dir = TempDir::new().unwrap();
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     let store_result = FileCredentialStore::new("test_password".to_string());
@@ -457,6 +467,7 @@ fn test_file_credential_store_delete() {
 #[test]
 fn test_file_credential_store_mark_used() {
     let temp_dir = TempDir::new().unwrap();
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     let store_result = FileCredentialStore::new("test_password".to_string());
@@ -488,6 +499,7 @@ fn test_file_credential_store_mark_used() {
 #[test]
 fn test_file_credential_store_update_nonexistent() {
     let temp_dir = TempDir::new().unwrap();
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     let store_result = FileCredentialStore::new("test_password".to_string());
@@ -511,6 +523,7 @@ fn test_file_credential_store_update_nonexistent() {
 #[test]
 fn test_file_credential_store_delete_nonexistent() {
     let temp_dir = TempDir::new().unwrap();
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     let store_result = FileCredentialStore::new("test_password".to_string());
@@ -528,6 +541,7 @@ fn test_file_credential_store_delete_nonexistent() {
 #[test]
 fn test_file_credential_store_mark_used_nonexistent() {
     let temp_dir = TempDir::new().unwrap();
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     let store_result = FileCredentialStore::new("test_password".to_string());
@@ -545,6 +559,7 @@ fn test_file_credential_store_mark_used_nonexistent() {
 #[test]
 fn test_file_credential_store_encryption_round_trip() {
     let temp_dir = TempDir::new().unwrap();
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     // Create store and add credential
@@ -577,6 +592,7 @@ use std::fs;
 #[test]
 fn test_discover_ssh_keys_no_ssh_dir() {
     let temp_dir = TempDir::new().unwrap();
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     // No .ssh directory exists
@@ -596,6 +612,7 @@ fn test_discover_ssh_keys_with_standard_keys() {
     let ssh_dir = temp_dir.path().join(".ssh");
     fs::create_dir_all(&ssh_dir).unwrap();
 
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     // Create standard key files
@@ -627,6 +644,7 @@ fn test_discover_ssh_keys_ignores_public_keys() {
     let ssh_dir = temp_dir.path().join(".ssh");
     fs::create_dir_all(&ssh_dir).unwrap();
 
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     // Create private and public key pair
@@ -659,6 +677,7 @@ fn test_discover_ssh_keys_mixed_files() {
     let ssh_dir = temp_dir.path().join(".ssh");
     fs::create_dir_all(&ssh_dir).unwrap();
 
+    let _lock = ENV_MUTEX.lock().unwrap();
     std::env::set_var("HOME", temp_dir.path());
 
     // Create mix of files
