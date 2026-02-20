@@ -308,6 +308,7 @@ impl AuthenticatedConnectionStrategy for SshConnectionStrategy {
 
 /// Enum representing different connection types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ConnectionType {
     Http,
     Ssh,
