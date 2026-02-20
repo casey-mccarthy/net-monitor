@@ -689,6 +689,7 @@ impl NetworkMonitorTui {
             "Target",
             "Type",
             "Status",
+            "Latency",
             "Uptime/Downtime",
             "Last Check",
         ])
@@ -794,6 +795,18 @@ impl NetworkMonitorTui {
                             .add_modifier(Modifier::BOLD),
                     )),
                     Cell::from(Span::styled(
+                        match node.response_time {
+                            Some(ms) => format!("{}ms", ms),
+                            None => "—".to_string(),
+                        },
+                        Style::default().fg(match node.response_time {
+                            Some(ms) if ms < 100 => Color::Green,
+                            Some(ms) if ms < 300 => Color::Yellow,
+                            Some(_) => Color::Red,
+                            None => Color::DarkGray,
+                        }),
+                    )),
+                    Cell::from(Span::styled(
                         uptime_downtime,
                         Style::default().fg(Color::White),
                     )),
@@ -837,12 +850,13 @@ impl NetworkMonitorTui {
         let table = Table::new(
             rows,
             [
-                Constraint::Percentage(18),
-                Constraint::Percentage(22),
-                Constraint::Percentage(10),
-                Constraint::Percentage(12),
-                Constraint::Percentage(18),
+                Constraint::Percentage(16),
                 Constraint::Percentage(20),
+                Constraint::Percentage(8),
+                Constraint::Percentage(12),
+                Constraint::Percentage(10),
+                Constraint::Percentage(16),
+                Constraint::Percentage(18),
             ],
         )
         .header(header)
