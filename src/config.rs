@@ -5,9 +5,11 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Application configuration
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {}
 
+#[allow(dead_code)]
 impl AppConfig {
     /// Load configuration from file, or create default if it doesn't exist
     pub fn load() -> Result<Self> {
