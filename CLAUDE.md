@@ -139,15 +139,29 @@ cargo llvm-cov clean
 
 ## Development Workflow
 
+**🚨 CRITICAL: Run ALL checks BEFORE creating commits (not just before pushing).** Every commit must pass formatting, linting, tests, and build checks. Do not stage and commit code without verifying it first. This prevents CI failures and keeps the commit history clean.
+
 When making changes:
 1. Run `cargo fmt` to format code
-2. **IMPORTANT:** Commit formatting changes if any were made: `git add -A && git commit -m "style: apply formatting"`
-3. Run `cargo fmt -- --check` to verify formatting
-4. Run `RUSTFLAGS="-A dead_code" cargo test --all-features` to test
-5. Run `RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warnings` for linting
-6. Run `RUSTFLAGS="-A dead_code" cargo build --release` for final build
+2. Run `cargo fmt -- --check` to verify formatting
+3. Run `RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warnings` for linting
+4. Run `RUSTFLAGS="-A dead_code" cargo test` to test
+5. Run `RUSTFLAGS="-A dead_code" cargo build --release` for final build
+6. **Only after all checks pass**, stage and commit your changes
+7. If formatting changes were needed, commit them separately: `git add -A && git commit -m "style: apply formatting"`
 
 **⚠️ KEY POINT:** Always commit formatting changes immediately after running `cargo fmt`. Never push code with uncommitted formatting changes, as this will cause CI failures.
+
+### CI System Dependencies
+
+The CI runs on Linux (Ubuntu), macOS, and Windows. When adding new crate dependencies, verify they don't require system libraries that CI runners lack. The CI workflows (`.github/workflows/`) install these Linux system packages:
+- `libgtk-3-dev` — required by the `rfd` crate for native file dialogs
+- `gcc-mingw-w64-x86-64` — required for Windows cross-compilation
+
+If a new dependency needs additional system libraries, update **all** CI workflow files:
+- `.github/workflows/ci.yml` (clippy, test, coverage, build jobs)
+- `.github/workflows/build-test.yml` (single and matrix build jobs)
+- `.github/workflows/release.yml` (release build job)
 
 ## Git Workflow
 
