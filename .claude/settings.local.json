@@ -52,7 +52,7 @@
       "Bash(cargo clippy:*)",
       "Bash(cargo doc:*)",
       "Bash(cargo install:*)",
-      "Bash(RUSTFLAGS='-A dead_code' cargo build --release)",
+      "Bash(RUSTFLAGS='-A dead_code' cargo build --release)"
     ],
     "deny": [],
     "ask": []
