@@ -422,6 +422,13 @@ impl Database {
         Ok(())
     }
 
+    /// Deletes all nodes from the database, returning how many were removed
+    pub fn delete_all_nodes(&self) -> Result<usize> {
+        let conn = self.get_connection()?;
+        let count = conn.execute("DELETE FROM nodes", [])?;
+        Ok(count)
+    }
+
     /// Adds a monitoring result to the database
     pub fn add_monitoring_result(&self, result: &MonitoringResult) -> Result<i64> {
         let conn = self.get_connection()?;

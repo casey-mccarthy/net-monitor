@@ -301,9 +301,19 @@ enum AppState {
     EditCredential,
     Help,
     ConfirmDelete,
-    ImportNodes,
-    ExportNodes,
+    ImportModeSelect,
     Reorder,
+    About,
+}
+
+enum DeferredAction {
+    ShowImportDialog,
+    ShowExportDialog,
+}
+
+enum FileDialogKind {
+    Import,
+    Export,
 }
 
 pub struct NetworkMonitorTui {
@@ -334,7 +344,9 @@ pub struct NetworkMonitorTui {
     delete_credential_index: Option<usize>,
     return_to_credentials_after_delete: bool,
     // Import/Export
-    import_export_path: String,
+    import_file_path: Option<PathBuf>,
+    import_mode_selected: usize,
+    deferred_action: Option<DeferredAction>,
     // Auto-hide selection
     last_input_time: Option<Instant>,
     // Cursor blink state for empty fields
@@ -389,7 +401,9 @@ impl NetworkMonitorTui {
             delete_node_index: None,
             delete_credential_index: None,
             return_to_credentials_after_delete: false,
-            import_export_path: String::new(),
+            import_file_path: None,
+            import_mode_selected: 0,
+            deferred_action: None,
             last_input_time: Some(Instant::now()),
             cursor_blink_state: true,
             last_blink_time: Instant::now(),
@@ -556,6 +570,11 @@ impl NetworkMonitorTui {
                                     self.previous_state = None;
                                 }
                             }
+                            AppState::About => {
+                                if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+                                    self.state = AppState::Main;
+                                }
+                            }
                             AppState::ConfirmDelete => {
                                 if self.handle_confirm_delete_input(key.code) {
                                     // Return to credential manager if we came from there
@@ -567,8 +586,8 @@ impl NetworkMonitorTui {
                                     }
                                 }
                             }
-                            AppState::ImportNodes | AppState::ExportNodes => {
-                                if self.handle_import_export_input(key.code) {
+                            AppState::ImportModeSelect => {
+                                if self.handle_import_mode_input(key.code) {
                                     self.state = AppState::Main;
                                 }
                             }
@@ -581,9 +600,58 @@ impl NetworkMonitorTui {
                     }
                 }
             }
+
+            // Handle deferred actions (file dialogs) outside the key event match
+            if let Some(action) = self.deferred_action.take() {
+                match action {
+                    DeferredAction::ShowImportDialog => {
+                        if let Some(path) =
+                            self.show_file_dialog(FileDialogKind::Import, terminal)?
+                        {
+                            self.import_file_path = Some(path);
+                            self.import_mode_selected = 0;
+                            self.state = AppState::ImportModeSelect;
+                        }
+                    }
+                    DeferredAction::ShowExportDialog => {
+                        if let Some(path) =
+                            self.show_file_dialog(FileDialogKind::Export, terminal)?
+                        {
+                            self.export_nodes_to_path(&path);
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())
+    }
+
+    fn show_file_dialog<B: ratatui::backend::Backend>(
+        &self,
+        kind: FileDialogKind,
+        terminal: &mut Terminal<B>,
+    ) -> Result<Option<PathBuf>> {
+        // Temporarily leave TUI mode so the OS file dialog can appear
+        disable_raw_mode()?;
+        execute!(io::stdout(), LeaveAlternateScreen)?;
+
+        let result = match kind {
+            FileDialogKind::Import => rfd::FileDialog::new()
+                .add_filter("JSON", &["json"])
+                .pick_file(),
+            FileDialogKind::Export => rfd::FileDialog::new()
+                .add_filter("JSON", &["json"])
+                .set_file_name("nodes.json")
+                .save_file(),
+        };
+
+        // Re-enter TUI mode
+        execute!(io::stdout(), EnterAlternateScreen)?;
+        enable_raw_mode()?;
+        terminal.clear()?;
+
+        Ok(result)
     }
 
     fn ui(&mut self, f: &mut Frame) {
@@ -595,7 +663,8 @@ impl NetworkMonitorTui {
             AppState::ViewHistory => self.render_history_view(f),
             AppState::Help => self.render_help_view(f),
             AppState::ConfirmDelete => self.render_confirm_delete(f),
-            AppState::ImportNodes | AppState::ExportNodes => self.render_import_export(f),
+            AppState::ImportModeSelect => self.render_import_mode_select(f),
+            AppState::About => self.render_about_view(f),
         }
     }
 
@@ -662,10 +731,13 @@ impl NetworkMonitorTui {
                 Span::raw("]eorder "),
                 Span::raw("["),
                 Span::styled("I", Style::default().fg(Color::Yellow)),
-                Span::raw("]mport "),
+                Span::raw("]mport\u{2026} "),
                 Span::raw("["),
                 Span::styled("X", Style::default().fg(Color::Yellow)),
-                Span::raw("]export "),
+                Span::raw("]export\u{2026} "),
+                Span::raw("["),
+                Span::styled("B", Style::default().fg(Color::Yellow)),
+                Span::raw("]About "),
                 Span::raw("["),
                 Span::styled("?", Style::default().fg(Color::Yellow)),
                 Span::raw("]Help "),
@@ -1758,6 +1830,58 @@ impl NetworkMonitorTui {
         f.render_widget(help, chunks[2]);
     }
 
+    fn render_about_view(&mut self, f: &mut Frame) {
+        let area = centered_rect(50, 40, f.area());
+        f.render_widget(Clear, area);
+
+        let block = Block::default()
+            .title("About")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let text = vec![
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "Net Monitor",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Version: ", Style::default().fg(Color::Yellow)),
+                Span::raw(env!("CARGO_PKG_VERSION")),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Description: ", Style::default().fg(Color::Yellow)),
+                Span::raw("A network monitoring tool with a TUI interface"),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("License: ", Style::default().fg(Color::Yellow)),
+                Span::raw("MIT OR Apache-2.0"),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Repository: ", Style::default().fg(Color::Yellow)),
+                Span::raw("https://github.com/casey-mccarthy/net-monitor"),
+            ]),
+            Line::from(""),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "Press Esc or q to close",
+                Style::default()
+                    .fg(Color::Gray)
+                    .add_modifier(Modifier::ITALIC),
+            )]),
+        ];
+
+        let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
+
+        f.render_widget(paragraph, area);
+    }
+
     fn render_help_view(&mut self, f: &mut Frame) {
         let area = centered_rect(60, 70, f.area());
         f.render_widget(Clear, area);
@@ -1912,33 +2036,18 @@ impl NetworkMonitorTui {
                     ]),
                 ],
             ),
-            Some(AppState::ImportNodes) => (
-                "Help - Import Nodes",
+            Some(AppState::ImportModeSelect) => (
+                "Help - Import Mode",
                 vec![
-                    Line::from(vec![Span::raw(
-                        "Enter the path to a JSON file to import nodes.",
-                    )]),
+                    Line::from(vec![Span::raw("Choose how to handle imported nodes.")]),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled("Enter", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Confirm import"),
+                        Span::styled("Up/Down", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Select mode"),
                     ]),
                     Line::from(vec![
-                        Span::styled("Esc", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Cancel"),
-                    ]),
-                ],
-            ),
-            Some(AppState::ExportNodes) => (
-                "Help - Export Nodes",
-                vec![
-                    Line::from(vec![Span::raw(
-                        "Enter the path where nodes will be exported as JSON.",
-                    )]),
-                    Line::from(""),
-                    Line::from(vec![
                         Span::styled("Enter", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Confirm export"),
+                        Span::raw(" - Confirm selection"),
                     ]),
                     Line::from(vec![
                         Span::styled("Esc", Style::default().fg(Color::Yellow)),
@@ -1979,6 +2088,19 @@ impl NetworkMonitorTui {
                     Line::from(vec![
                         Span::styled("Esc", Style::default().fg(Color::Yellow)),
                         Span::raw(" - Cancel and restore original order"),
+                    ]),
+                ],
+            ),
+            Some(AppState::About) => (
+                "Help - About",
+                vec![
+                    Line::from(vec![Span::raw(
+                        "View application information and version details.",
+                    )]),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("Esc/q", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Close about view"),
                     ]),
                 ],
             ),
@@ -2087,40 +2209,75 @@ impl NetworkMonitorTui {
         f.render_widget(paragraph, area);
     }
 
-    fn render_import_export(&mut self, f: &mut Frame) {
-        let area = centered_rect(60, 20, f.area());
+    fn render_import_mode_select(&mut self, f: &mut Frame) {
+        let area = centered_rect(60, 30, f.area());
         f.render_widget(Clear, area);
 
-        let title = if self.state == AppState::ImportNodes {
-            "Import Nodes"
-        } else {
-            "Export Nodes"
-        };
+        let filename = self
+            .import_file_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
 
         let block = Block::default()
-            .title(title)
+            .title("Import Nodes")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan));
 
-        let cursor = if self.cursor_blink_state { "│" } else { "" };
-        let text = vec![
-            Line::from("Enter file path:"),
-            Line::from(Span::styled(
-                if self.import_export_path.is_empty() {
-                    cursor
-                } else {
-                    &self.import_export_path
-                },
-                Style::default().bg(Color::DarkGray),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
-                Span::raw(" Confirm | "),
-                Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
-                Span::raw(" Cancel"),
-            ]),
+        let options = [
+            (
+                "Import & Skip Conflicts",
+                "Skip nodes whose name matches an existing node",
+            ),
+            (
+                "Clear & Import All",
+                "Delete all existing nodes, then import everything",
+            ),
         ];
+
+        let mut text = vec![
+            Line::from(vec![
+                Span::raw("File: "),
+                Span::styled(&filename, Style::default().fg(Color::Green)),
+            ]),
+            Line::from(""),
+            Line::from("Select import mode:"),
+            Line::from(""),
+        ];
+
+        for (i, (label, desc)) in options.iter().enumerate() {
+            let marker = if i == self.import_mode_selected {
+                ">"
+            } else {
+                " "
+            };
+            let style = if i == self.import_mode_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            text.push(Line::from(Span::styled(
+                format!(" {} {}", marker, label),
+                style,
+            )));
+            text.push(Line::from(Span::styled(
+                format!("   {}", desc),
+                Style::default().fg(Color::DarkGray),
+            )));
+            text.push(Line::from(""));
+        }
+
+        text.push(Line::from(vec![
+            Span::styled("[Up/Down]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Select  "),
+            Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Confirm  "),
+            Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Cancel"),
+        ]));
 
         let paragraph = Paragraph::new(text).block(block);
         f.render_widget(paragraph, area);
@@ -2182,12 +2339,10 @@ impl NetworkMonitorTui {
                 self.state = AppState::ManageCredentials;
             }
             KeyCode::Char('i') | KeyCode::Char('I') => {
-                self.import_export_path.clear();
-                self.state = AppState::ImportNodes;
+                self.deferred_action = Some(DeferredAction::ShowImportDialog);
             }
             KeyCode::Char('x') | KeyCode::Char('X') => {
-                self.import_export_path.clear();
-                self.state = AppState::ExportNodes;
+                self.deferred_action = Some(DeferredAction::ShowExportDialog);
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 if self.nodes.len() > 1 {
@@ -2197,6 +2352,9 @@ impl NetworkMonitorTui {
                         self.state = AppState::Reorder;
                     }
                 }
+            }
+            KeyCode::Char('b') | KeyCode::Char('B') => {
+                self.state = AppState::About;
             }
             KeyCode::Char('?') => {
                 self.previous_state = Some(AppState::Main);
@@ -2490,14 +2648,26 @@ impl NetworkMonitorTui {
         false
     }
 
-    fn handle_import_export_input(&mut self, key: KeyCode) -> bool {
+    fn handle_import_mode_input(&mut self, key: KeyCode) -> bool {
         match key {
             KeyCode::Esc => return true,
+            KeyCode::Up => {
+                if self.import_mode_selected > 0 {
+                    self.import_mode_selected -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.import_mode_selected < 1 {
+                    self.import_mode_selected += 1;
+                }
+            }
             KeyCode::Enter => {
-                if self.state == AppState::ImportNodes {
-                    self.import_nodes();
-                } else {
-                    self.export_nodes();
+                if let Some(path) = self.import_file_path.take() {
+                    if self.import_mode_selected == 0 {
+                        self.import_nodes_skip_conflicts(&path);
+                    } else {
+                        self.import_nodes_clear_all(&path);
+                    }
                 }
                 return true;
             }
@@ -2505,12 +2675,6 @@ impl NetworkMonitorTui {
                 self.previous_state = Some(self.state);
                 self.state = AppState::Help;
                 return false;
-            }
-            KeyCode::Char(c) => {
-                self.import_export_path.push(c);
-            }
-            KeyCode::Backspace => {
-                self.import_export_path.pop();
             }
             _ => {}
         }
@@ -3059,9 +3223,76 @@ impl NetworkMonitorTui {
         Ok(())
     }
 
-    fn import_nodes(&mut self) {
-        let path = PathBuf::from(&self.import_export_path);
-        match std::fs::read_to_string(&path) {
+    fn import_nodes_skip_conflicts(&mut self, path: &PathBuf) {
+        match std::fs::read_to_string(path) {
+            Ok(data) => match serde_json::from_str::<Vec<NodeImport>>(&data) {
+                Ok(nodes_to_import) => {
+                    let existing_names: std::collections::HashSet<String> =
+                        self.nodes.iter().map(|n| n.name.clone()).collect();
+                    let mut imported = 0;
+                    let mut skipped = 0;
+                    for import in nodes_to_import {
+                        if existing_names.contains(&import.name) {
+                            skipped += 1;
+                            continue;
+                        }
+                        let mut node = Node {
+                            id: None,
+                            name: import.name,
+                            detail: import.detail,
+                            status: NodeStatus::Offline,
+                            last_check: None,
+                            response_time: None,
+                            monitoring_interval: import.monitoring_interval,
+                            credential_id: import.credential_id,
+                            consecutive_failures: 0,
+                            max_check_attempts: import.max_check_attempts,
+                            retry_interval: import.retry_interval,
+                        };
+                        if let Ok(id) = self.database.add_node(&node) {
+                            node.id = Some(id);
+                            if let Some(handle) = &self.monitoring_handle {
+                                let _ = handle.config_tx.send(NodeConfigUpdate::Add(node.clone()));
+                            }
+                            self.nodes.push(node);
+                            imported += 1;
+                        }
+                    }
+                    self.set_status_message(format!(
+                        "Imported {} nodes, skipped {} conflicts",
+                        imported, skipped
+                    ));
+                }
+                Err(e) => {
+                    self.set_status_message(format!("Failed to parse import file: {}", e));
+                }
+            },
+            Err(e) => {
+                self.set_status_message(format!("Failed to read import file: {}", e));
+            }
+        }
+    }
+
+    fn import_nodes_clear_all(&mut self, path: &PathBuf) {
+        // Remove all existing nodes from monitoring engine
+        for node in &self.nodes {
+            if let (Some(id), Some(handle)) = (node.id, &self.monitoring_handle) {
+                let _ = handle.config_tx.send(NodeConfigUpdate::Delete(id));
+            }
+        }
+
+        // Clear from database
+        if let Err(e) = self.database.delete_all_nodes() {
+            self.set_status_message(format!("Failed to clear nodes: {}", e));
+            return;
+        }
+
+        // Clear in-memory state
+        self.nodes.clear();
+        self.table_state.select(None);
+
+        // Import all nodes from file
+        match std::fs::read_to_string(path) {
             Ok(data) => match serde_json::from_str::<Vec<NodeImport>>(&data) {
                 Ok(nodes_to_import) => {
                     let mut count = 0;
@@ -3088,7 +3319,10 @@ impl NetworkMonitorTui {
                             count += 1;
                         }
                     }
-                    self.set_status_message(format!("Imported {} nodes", count));
+                    if !self.nodes.is_empty() {
+                        self.table_state.select(Some(0));
+                    }
+                    self.set_status_message(format!("Cleared all nodes, imported {}", count));
                 }
                 Err(e) => {
                     self.set_status_message(format!("Failed to parse import file: {}", e));
@@ -3100,8 +3334,7 @@ impl NetworkMonitorTui {
         }
     }
 
-    fn export_nodes(&mut self) {
-        let path = PathBuf::from(&self.import_export_path);
+    fn export_nodes_to_path(&mut self, path: &PathBuf) {
         let nodes_to_export: Vec<NodeImport> = self
             .nodes
             .iter()
@@ -3117,7 +3350,7 @@ impl NetworkMonitorTui {
 
         match serde_json::to_string_pretty(&nodes_to_export) {
             Ok(data) => {
-                if let Err(e) = std::fs::write(&path, data) {
+                if let Err(e) = std::fs::write(path, data) {
                     self.set_status_message(format!("Failed to write export file: {}", e));
                 } else {
                     self.set_status_message("Nodes exported successfully");
@@ -4172,8 +4405,7 @@ mod tests {
             AppState::EditCredential,
             AppState::Help,
             AppState::ConfirmDelete,
-            AppState::ImportNodes,
-            AppState::ExportNodes,
+            AppState::ImportModeSelect,
             AppState::Reorder,
         ];
 
