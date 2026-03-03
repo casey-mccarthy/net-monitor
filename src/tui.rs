@@ -867,15 +867,23 @@ impl NetworkMonitorTui {
                             .add_modifier(Modifier::BOLD),
                     )),
                     Cell::from(Span::styled(
-                        match node.response_time {
-                            Some(ms) => format!("{}ms", ms),
-                            None => "—".to_string(),
+                        if node.status == NodeStatus::Offline {
+                            "—".to_string()
+                        } else {
+                            match node.response_time {
+                                Some(ms) => format!("{}ms", ms),
+                                None => "—".to_string(),
+                            }
                         },
-                        Style::default().fg(match node.response_time {
-                            Some(ms) if ms < 100 => Color::Green,
-                            Some(ms) if ms < 300 => Color::Yellow,
-                            Some(_) => Color::Red,
-                            None => Color::DarkGray,
+                        Style::default().fg(if node.status == NodeStatus::Offline {
+                            Color::DarkGray
+                        } else {
+                            match node.response_time {
+                                Some(ms) if ms < 100 => Color::Green,
+                                Some(ms) if ms < 300 => Color::Yellow,
+                                Some(_) => Color::Red,
+                                None => Color::DarkGray,
+                            }
                         }),
                     )),
                     Cell::from(Span::styled(
