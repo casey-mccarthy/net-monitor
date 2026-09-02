@@ -484,6 +484,16 @@ impl NetworkMonitorTui {
         result
     }
 
+    /// Copies the monitoring runtime state (status, last check, response time,
+    /// consecutive failures) from `source` onto `target`, leaving `target`'s
+    /// configuration untouched.
+    fn apply_runtime_state(target: &mut Node, source: &Node) {
+        target.status = source.status;
+        target.last_check = source.last_check;
+        target.response_time = source.response_time;
+        target.consecutive_failures = source.consecutive_failures;
+    }
+
     fn run_app<B: ratatui::backend::Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
         loop {
             terminal.draw(|f| self.ui(f))?;
@@ -494,7 +504,10 @@ impl NetworkMonitorTui {
                     if let Some(node_id) = updated_node.id {
                         self.updated_nodes.insert(node_id, Instant::now());
                     }
-                    *node = updated_node;
+                    // Only take the runtime state from the engine. The engine's copy of
+                    // the configuration may predate an edit the user just saved, so
+                    // replacing the whole node would revert that edit on screen.
+                    Self::apply_runtime_state(node, &updated_node);
                 }
             }
 
@@ -3441,6 +3454,61 @@ mod tests {
     // ============================================================================
     // NetworkMonitorTui Integration Tests
     // ============================================================================
+
+    #[test]
+    fn test_apply_runtime_state_keeps_local_configuration() {
+        let mut local = Node {
+            id: Some(7),
+            name: "Edited name".to_string(),
+            detail: MonitorDetail::Http {
+                url: "https://edited.example.com".to_string(),
+                expected_status: 200,
+            },
+            status: NodeStatus::Offline,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 120,
+            credential_id: None,
+            consecutive_failures: 2,
+            max_check_attempts: 3,
+            retry_interval: 15,
+        };
+
+        // The engine reports a check result computed from the pre-edit configuration
+        let from_engine = Node {
+            id: Some(7),
+            name: "Old name".to_string(),
+            detail: MonitorDetail::Http {
+                url: "https://old.example.com".to_string(),
+                expected_status: 200,
+            },
+            status: NodeStatus::Online,
+            last_check: Some(chrono::Utc::now()),
+            response_time: Some(31),
+            monitoring_interval: 5,
+            credential_id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
+        };
+
+        NetworkMonitorTui::apply_runtime_state(&mut local, &from_engine);
+
+        assert_eq!(local.status, NodeStatus::Online);
+        assert_eq!(local.last_check, from_engine.last_check);
+        assert_eq!(local.response_time, Some(31));
+        assert_eq!(local.consecutive_failures, 0);
+
+        assert_eq!(local.name, "Edited name");
+        assert_eq!(local.monitoring_interval, 120);
+        assert_eq!(
+            local.detail,
+            MonitorDetail::Http {
+                url: "https://edited.example.com".to_string(),
+                expected_status: 200,
+            }
+        );
+    }
 
     #[test]
     fn test_network_monitor_tui_initialization() {

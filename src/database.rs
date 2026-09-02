@@ -380,6 +380,33 @@ impl Database {
         Ok(())
     }
 
+    /// Updates only the runtime monitoring state of a node (status, last check,
+    /// response time, consecutive failures).
+    ///
+    /// The monitoring engine uses this instead of `update_node` so that its
+    /// possibly stale copy of the node's configuration (name, target, interval)
+    /// never overwrites edits the user has made in the meantime.
+    pub fn update_node_runtime_state(&self, node: &Node) -> Result<()> {
+        let node_id = node.id.ok_or_else(|| {
+            anyhow::anyhow!("Cannot update runtime state of a node without an id")
+        })?;
+
+        let conn = self.get_connection()?;
+        conn.execute(
+            "UPDATE nodes SET
+                status = ?1, last_check = ?2, response_time = ?3, consecutive_failures = ?4
+            WHERE id = ?5",
+            params![
+                node.status.to_string(),
+                node.last_check.map(|dt| dt.to_rfc3339()),
+                node.response_time,
+                node.consecutive_failures,
+                node_id,
+            ],
+        )?;
+        Ok(())
+    }
+
     /// Retrieves all nodes from the database
     pub fn get_all_nodes(&self) -> Result<Vec<Node>> {
         let conn = self.get_connection()?;
