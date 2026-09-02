@@ -66,21 +66,21 @@ fn run_monitoring_loop(
 ) {
     let mut last_check_times: HashMap<i64, Instant> = HashMap::new();
 
-    // Initialize previous_statuses from database to avoid duplicate records on restart
-    let mut previous_statuses: HashMap<i64, NodeStatus> = initial_nodes
-        .iter()
-        .filter_map(|n| {
-            n.id.and_then(|id| {
-                db.get_latest_monitoring_result(id)
-                    .ok()
-                    .flatten()
-                    .map(|result| (id, result.status))
-                    .or(Some((id, n.status)))
-            })
-        })
-        .collect();
-
+    // Seed per-node state from the database so a restart neither records
+    // duplicate transitions nor loses track of how long the current state
+    // has lasted.
+    let mut previous_statuses: HashMap<i64, NodeStatus> = HashMap::new();
     let mut last_status_change_times: HashMap<i64, DateTime<Utc>> = HashMap::new();
+    for node in &initial_nodes {
+        if let Some(node_id) = node.id {
+            let (status, last_change) = load_node_state(&db, node_id, node.status);
+            previous_statuses.insert(node_id, status);
+            if let Some(changed_at) = last_change {
+                last_status_change_times.insert(node_id, changed_at);
+            }
+        }
+    }
+
     let mut current_nodes = initial_nodes;
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
@@ -176,6 +176,34 @@ fn run_monitoring_loop(
     }
 }
 
+/// Loads the persisted state the engine needs for a node: the status it was
+/// last known to be in and when its most recent status change happened.
+///
+/// The status comes from the latest monitoring result when one exists,
+/// otherwise from the node record itself (`fallback_status`). The timestamp
+/// comes from the latest recorded status change, or `None` if there has
+/// never been one.
+fn load_node_state(
+    db: &Database,
+    node_id: i64,
+    fallback_status: NodeStatus,
+) -> (NodeStatus, Option<DateTime<Utc>>) {
+    let status = db
+        .get_latest_monitoring_result(node_id)
+        .ok()
+        .flatten()
+        .map(|result| result.status)
+        .unwrap_or(fallback_status);
+
+    let last_change = db
+        .get_latest_status_change(node_id)
+        .ok()
+        .flatten()
+        .map(|change| change.changed_at);
+
+    (status, last_change)
+}
+
 /// Determines if a node should be checked based on its interval and current state.
 ///
 /// When degraded (soft failure), uses the shorter `retry_interval` for faster confirmation.
@@ -245,13 +273,11 @@ fn process_config_updates(
             NodeConfigUpdate::Add(node) => {
                 if !current_nodes.iter().any(|n| n.id == node.id) {
                     if let Some(node_id) = node.id {
-                        let status = db
-                            .get_latest_monitoring_result(node_id)
-                            .ok()
-                            .flatten()
-                            .map(|result| result.status)
-                            .unwrap_or(node.status);
+                        let (status, last_change) = load_node_state(db, node_id, node.status);
                         previous_statuses.insert(node_id, status);
+                        if let Some(changed_at) = last_change {
+                            last_status_change_times.insert(node_id, changed_at);
+                        }
                     }
                     current_nodes.push(node);
                 }
@@ -288,7 +314,57 @@ fn process_config_updates(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{MonitorDetail, DEFAULT_MAX_CHECK_ATTEMPTS};
+    use crate::models::{MonitorDetail, MonitoringResult, DEFAULT_MAX_CHECK_ATTEMPTS};
+
+    fn temp_db() -> (tempfile::TempDir, Database) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::new(dir.path().join("engine.db")).unwrap();
+        (dir, db)
+    }
+
+    #[test]
+    fn test_load_node_state_without_history_uses_fallback() {
+        let (_dir, db) = temp_db();
+        let node_id = db.add_node(&make_node(NodeStatus::Offline, 0, 3)).unwrap();
+
+        let (status, last_change) = load_node_state(&db, node_id, NodeStatus::Degraded);
+        assert_eq!(status, NodeStatus::Degraded);
+        assert_eq!(last_change, None);
+    }
+
+    #[test]
+    fn test_load_node_state_restores_status_and_change_time() {
+        let (_dir, db) = temp_db();
+        let node_id = db.add_node(&make_node(NodeStatus::Online, 0, 3)).unwrap();
+
+        let changed_at = Utc::now() - chrono::Duration::minutes(42);
+        db.add_status_change(&StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Online,
+            to_status: NodeStatus::Offline,
+            changed_at,
+            duration_ms: Some(1000),
+        })
+        .unwrap();
+        db.add_monitoring_result(&MonitoringResult {
+            id: None,
+            node_id,
+            timestamp: changed_at,
+            status: NodeStatus::Offline,
+            response_time: None,
+            details: None,
+        })
+        .unwrap();
+
+        let (status, last_change) = load_node_state(&db, node_id, NodeStatus::Online);
+        assert_eq!(status, NodeStatus::Offline);
+        // Compare at millisecond precision: RFC 3339 storage may drop sub-ms digits
+        assert_eq!(
+            last_change.map(|t| t.timestamp_millis()),
+            Some(changed_at.timestamp_millis())
+        );
+    }
 
     fn make_node(status: NodeStatus, failures: u32, max_attempts: u32) -> Node {
         Node {
