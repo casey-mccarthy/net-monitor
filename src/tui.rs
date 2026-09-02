@@ -605,28 +605,12 @@ impl NetworkMonitorTui {
                                     self.state = AppState::Help;
                                 }
                                 KeyCode::Down => {
-                                    let i = match self.history_table_state.selected() {
-                                        Some(i) => {
-                                            if i >= self.status_changes.len().saturating_sub(1) {
-                                                i
-                                            } else {
-                                                i + 1
-                                            }
-                                        }
-                                        None => 0,
-                                    };
-                                    if !self.status_changes.is_empty() {
-                                        self.history_table_state.select(Some(i));
-                                    }
+                                    let rows = self.history_row_count();
+                                    select_next_row(&mut self.history_table_state, rows);
                                 }
                                 KeyCode::Up => {
-                                    let i = match self.history_table_state.selected() {
-                                        Some(i) => i.saturating_sub(1),
-                                        None => 0,
-                                    };
-                                    if !self.status_changes.is_empty() {
-                                        self.history_table_state.select(Some(i));
-                                    }
+                                    let rows = self.history_row_count();
+                                    select_previous_row(&mut self.history_table_state, rows);
                                 }
                                 _ => {}
                             },
@@ -3415,12 +3399,19 @@ impl NetworkMonitorTui {
         }
     }
 
+    /// Number of rows in the history table: the "Current" state row (shown
+    /// whenever a node is being viewed) plus one row per recorded change.
+    /// Must match what `render_history_view` draws.
+    fn history_row_count(&self) -> usize {
+        usize::from(self.viewing_history_node_id.is_some()) + self.status_changes.len()
+    }
+
     fn load_status_history(&mut self, node_id: i64) {
         match self.database.get_status_changes(node_id, Some(50)) {
             Ok(changes) => {
                 self.status_changes = changes;
-                // Select first row if there are any changes
-                if !self.status_changes.is_empty() {
+                // Start on the first row (the current state)
+                if self.history_row_count() > 0 {
                     self.history_table_state.select(Some(0));
                 } else {
                     self.history_table_state.select(None);
@@ -3475,6 +3466,31 @@ fn latency_color(node: &Node) -> Color {
         Some(_) => Color::Red,
         None => Color::DarkGray,
     }
+}
+
+/// Moves a table selection down one row, clamped to the last of `row_count` rows.
+/// With no current selection the first row is selected. Does nothing for an empty table.
+fn select_next_row(state: &mut TableState, row_count: usize) {
+    let Some(last) = row_count.checked_sub(1) else {
+        state.select(None);
+        return;
+    };
+    let next = match state.selected() {
+        Some(i) => (i + 1).min(last),
+        None => 0,
+    };
+    state.select(Some(next));
+}
+
+/// Moves a table selection up one row, stopping at the first row.
+/// With no current selection the first row is selected. Does nothing for an empty table.
+fn select_previous_row(state: &mut TableState, row_count: usize) {
+    if row_count == 0 {
+        state.select(None);
+        return;
+    }
+    let previous = state.selected().map_or(0, |i| i.saturating_sub(1));
+    state.select(Some(previous));
 }
 
 fn format_duration(duration_ms: i64) -> String {
@@ -3691,6 +3707,53 @@ mod tests {
         assert!(!close, "form must stay open after a validation failure");
         assert_eq!(tui.credential_form.username, "admin");
         assert_eq!(tui.credential_form.password, "hunter2");
+    }
+
+    #[test]
+    fn test_select_next_row_reaches_last_row() {
+        let mut state = TableState::default();
+        // Table with a "Current" row plus 3 changes = 4 rows
+        select_next_row(&mut state, 4);
+        assert_eq!(state.selected(), Some(0));
+        select_next_row(&mut state, 4);
+        select_next_row(&mut state, 4);
+        select_next_row(&mut state, 4);
+        assert_eq!(state.selected(), Some(3), "last row must be reachable");
+        select_next_row(&mut state, 4);
+        assert_eq!(state.selected(), Some(3), "must clamp at the last row");
+    }
+
+    #[test]
+    fn test_select_previous_row_stops_at_first_row() {
+        let mut state = TableState::default();
+        state.select(Some(2));
+        select_previous_row(&mut state, 4);
+        assert_eq!(state.selected(), Some(1));
+        select_previous_row(&mut state, 4);
+        select_previous_row(&mut state, 4);
+        assert_eq!(state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_row_navigation_on_empty_table_selects_nothing() {
+        let mut state = TableState::default();
+        state.select(Some(1));
+        select_next_row(&mut state, 0);
+        assert_eq!(state.selected(), None);
+        state.select(Some(1));
+        select_previous_row(&mut state, 0);
+        assert_eq!(state.selected(), None);
+    }
+
+    #[test]
+    fn test_row_navigation_with_only_current_row() {
+        let mut state = TableState::default();
+        select_next_row(&mut state, 1);
+        assert_eq!(state.selected(), Some(0));
+        select_next_row(&mut state, 1);
+        assert_eq!(state.selected(), Some(0));
+        select_previous_row(&mut state, 1);
+        assert_eq!(state.selected(), Some(0));
     }
 
     #[test]
