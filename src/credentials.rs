@@ -235,10 +235,19 @@ pub struct FileCredentialStore {
 }
 
 impl FileCredentialStore {
-    /// Create a new file-based credential store
+    /// Create a new file-based credential store at the default location
     pub fn new(master_password: String) -> Result<Self> {
-        let storage_path = Self::get_storage_path()?;
-        std::fs::create_dir_all(storage_path.parent().unwrap())?;
+        Self::with_path(Self::get_storage_path()?, master_password)
+    }
+
+    /// Create a file-based credential store backed by an explicit file.
+    ///
+    /// Tests use this so they never read or write the real credential store
+    /// in the user's data directory.
+    pub fn with_path(storage_path: PathBuf, master_password: String) -> Result<Self> {
+        if let Some(parent) = storage_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
         let mut store = Self {
             storage_path,
