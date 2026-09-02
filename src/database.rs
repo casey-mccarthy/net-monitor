@@ -260,12 +260,6 @@ impl Database {
             info!("Added retry_interval column to nodes table");
         }
 
-        // Migrate Degraded status to Offline for any leftover from interrupted runs
-        conn.execute(
-            "UPDATE nodes SET status = 'Offline', consecutive_failures = 0 WHERE status = 'Degraded'",
-            [],
-        )?;
-
         Ok(())
     }
 

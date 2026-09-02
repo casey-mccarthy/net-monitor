@@ -1157,3 +1157,34 @@ fn test_update_display_orders() {
     assert_eq!(nodes[1].name, "Bravo");
     assert_eq!(nodes[2].name, "Alpha");
 }
+
+#[test]
+fn test_degraded_state_survives_reopen() {
+    let test_db = TestDatabase::new();
+
+    let mut node = NodeBuilder::new()
+        .name("Soft Failing Node")
+        .http("https://example.com/degraded", 200)
+        .build();
+    node.status = NodeStatus::Degraded;
+    node.consecutive_failures = 2;
+    node.max_check_attempts = 3;
+
+    let id = test_db.db.add_node(&node).unwrap();
+
+    // Reopening the database runs migrations again, simulating an app restart.
+    let db2 = net_monitor::database::Database::new(test_db.path()).unwrap();
+
+    let reopened = db2
+        .get_all_nodes()
+        .unwrap()
+        .into_iter()
+        .find(|n| n.id == Some(id))
+        .expect("node should still exist after reopen");
+
+    // A soft-state node must stay Degraded across restarts. Promoting it to
+    // Offline would report a hard down that never happened, and resetting the
+    // failure counter would restart confirmation from zero.
+    assert_eq!(reopened.status, NodeStatus::Degraded);
+    assert_eq!(reopened.consecutive_failures, 2);
+}
