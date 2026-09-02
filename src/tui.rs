@@ -913,16 +913,8 @@ impl NetworkMonitorTui {
                             .add_modifier(Modifier::BOLD),
                     )),
                     Cell::from(Span::styled(
-                        match node.response_time {
-                            Some(ms) => format!("{}ms", ms),
-                            None => "—".to_string(),
-                        },
-                        Style::default().fg(match node.response_time {
-                            Some(ms) if ms < 100 => Color::Green,
-                            Some(ms) if ms < 300 => Color::Yellow,
-                            Some(_) => Color::Red,
-                            None => Color::DarkGray,
-                        }),
+                        latency_text(node),
+                        Style::default().fg(latency_color(node)),
                     )),
                     Cell::from(Span::styled(
                         uptime_downtime,
@@ -3406,6 +3398,33 @@ impl NetworkMonitorTui {
     }
 }
 
+/// Latency to show for a node. Only an Online node has a current response
+/// time; a Degraded or Offline node's last check failed, so any stored value
+/// is stale (or, for data written before this rule, the time spent waiting
+/// for the failure) and must not be shown as latency.
+fn current_latency(node: &Node) -> Option<u64> {
+    match node.status {
+        NodeStatus::Online => node.response_time,
+        NodeStatus::Degraded | NodeStatus::Offline => None,
+    }
+}
+
+fn latency_text(node: &Node) -> String {
+    match current_latency(node) {
+        Some(ms) => format!("{}ms", ms),
+        None => "—".to_string(),
+    }
+}
+
+fn latency_color(node: &Node) -> Color {
+    match current_latency(node) {
+        Some(ms) if ms < 100 => Color::Green,
+        Some(ms) if ms < 300 => Color::Yellow,
+        Some(_) => Color::Red,
+        None => Color::DarkGray,
+    }
+}
+
 fn format_duration(duration_ms: i64) -> String {
     let seconds = duration_ms / 1000;
     let minutes = seconds / 60;
@@ -3454,6 +3473,64 @@ mod tests {
     // ============================================================================
     // NetworkMonitorTui Integration Tests
     // ============================================================================
+
+    fn latency_test_node(status: NodeStatus, response_time: Option<u64>) -> Node {
+        Node {
+            id: Some(1),
+            name: "n".to_string(),
+            detail: MonitorDetail::Http {
+                url: "https://example.com".to_string(),
+                expected_status: 200,
+            },
+            status,
+            last_check: None,
+            response_time,
+            monitoring_interval: 60,
+            credential_id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
+        }
+    }
+
+    #[test]
+    fn test_latency_shown_only_for_online_nodes() {
+        let online = latency_test_node(NodeStatus::Online, Some(42));
+        assert_eq!(latency_text(&online), "42ms");
+        assert_eq!(latency_color(&online), Color::Green);
+
+        // A refused connection fails in a couple of ms; that is not latency
+        let offline_fast = latency_test_node(NodeStatus::Offline, Some(2));
+        assert_eq!(latency_text(&offline_fast), "—");
+        assert_eq!(latency_color(&offline_fast), Color::DarkGray);
+
+        // A timeout waits the full timeout; that is not latency either
+        let offline_timeout = latency_test_node(NodeStatus::Offline, Some(30000));
+        assert_eq!(latency_text(&offline_timeout), "—");
+
+        let degraded = latency_test_node(NodeStatus::Degraded, Some(150));
+        assert_eq!(latency_text(&degraded), "—");
+        assert_eq!(latency_color(&degraded), Color::DarkGray);
+
+        let online_unknown = latency_test_node(NodeStatus::Online, None);
+        assert_eq!(latency_text(&online_unknown), "—");
+    }
+
+    #[test]
+    fn test_latency_color_thresholds() {
+        assert_eq!(
+            latency_color(&latency_test_node(NodeStatus::Online, Some(99))),
+            Color::Green
+        );
+        assert_eq!(
+            latency_color(&latency_test_node(NodeStatus::Online, Some(100))),
+            Color::Yellow
+        );
+        assert_eq!(
+            latency_color(&latency_test_node(NodeStatus::Online, Some(300))),
+            Color::Red
+        );
+    }
 
     #[test]
     fn test_apply_runtime_state_keeps_local_configuration() {

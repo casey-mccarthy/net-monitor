@@ -28,11 +28,15 @@ pub async fn check_node(node: &Node) -> Result<MonitoringResult> {
             timeout,
         } => check_tcp(host, *port, *timeout).await,
     };
-    let response_time = start_time.elapsed().as_millis() as u64;
+    let elapsed_ms = start_time.elapsed().as_millis() as u64;
 
-    let (status, details) = match check_result {
-        Ok(details) => (NodeStatus::Online, Some(details)),
-        Err(e) => (NodeStatus::Offline, Some(e.to_string())),
+    // Only a successful check has a meaningful latency. For a failed check the
+    // elapsed time is just how long we waited before giving up (a timeout, or
+    // a few milliseconds for "connection refused"), which is not a response
+    // time and must not be displayed as one.
+    let (status, details, response_time) = match check_result {
+        Ok(details) => (NodeStatus::Online, Some(details), Some(elapsed_ms)),
+        Err(e) => (NodeStatus::Offline, Some(e.to_string()), None),
     };
 
     Ok(MonitoringResult {
@@ -40,7 +44,7 @@ pub async fn check_node(node: &Node) -> Result<MonitoringResult> {
         node_id: node.id.unwrap_or(0),
         timestamp: Utc::now(),
         status,
-        response_time: Some(response_time),
+        response_time,
         details,
     })
 }
@@ -149,6 +153,54 @@ async fn check_tcp(host: &str, port: u16, timeout: u64) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
+
+    fn tcp_node(port: u16) -> Node {
+        Node {
+            id: Some(1),
+            name: "tcp".to_string(),
+            detail: MonitorDetail::Tcp {
+                host: "127.0.0.1".to_string(),
+                port,
+                timeout: 2,
+            },
+            status: NodeStatus::Online,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 60,
+            credential_id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_successful_check_reports_response_time() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let result = check_node(&tcp_node(port)).await.unwrap();
+        assert_eq!(result.status, NodeStatus::Online);
+        assert!(result.response_time.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_failed_check_reports_no_response_time() {
+        // Bind then drop so the port is known to be closed: connection refused
+        let port = {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+
+        let result = check_node(&tcp_node(port)).await.unwrap();
+        assert_eq!(result.status, NodeStatus::Offline);
+        assert_eq!(
+            result.response_time, None,
+            "a failed check has no latency to report"
+        );
+        assert!(result.details.is_some());
+    }
 
     #[test]
     fn test_normalize_http_url_with_https() {
