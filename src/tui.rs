@@ -2478,12 +2478,15 @@ impl NetworkMonitorTui {
         match key {
             KeyCode::Esc => return true,
             KeyCode::Enter => {
-                if self.state == AppState::AddNode {
-                    self.add_node_from_form();
+                // Only close the form when the save succeeded; otherwise the
+                // user would lose everything they typed and just see a brief
+                // error message.
+                let saved = if self.state == AppState::AddNode {
+                    self.add_node_from_form()
                 } else {
-                    self.update_node_from_form();
-                }
-                return true;
+                    self.update_node_from_form()
+                };
+                return saved;
             }
             KeyCode::Tab => {
                 self.node_form.current_field =
@@ -2588,8 +2591,8 @@ impl NetworkMonitorTui {
         match key {
             KeyCode::Esc => return true,
             KeyCode::Enter => {
-                self.save_credential_from_form();
-                return true;
+                // Keep the form open (with the user's input) if saving failed
+                return self.save_credential_from_form();
             }
             KeyCode::Tab => {
                 self.credential_form.current_field = (self.credential_form.current_field + 1)
@@ -2770,13 +2773,14 @@ impl NetworkMonitorTui {
         }
     }
 
-    fn save_credential_from_form(&mut self) {
+    /// Saves the credential form. Returns `true` if the credential was stored.
+    fn save_credential_from_form(&mut self) -> bool {
         use crate::credentials::{SensitiveString, SshCredential};
         use std::path::PathBuf;
 
         if self.credential_form.name.trim().is_empty() {
             self.set_status_message("Credential name cannot be empty");
-            return;
+            return false;
         }
 
         let credential = match self.credential_form.credential_type {
@@ -2786,7 +2790,7 @@ impl NetworkMonitorTui {
                     || self.credential_form.password.trim().is_empty()
                 {
                     self.set_status_message("Username and password are required");
-                    return;
+                    return false;
                 }
                 SshCredential::Password {
                     username: self.credential_form.username.clone(),
@@ -2798,7 +2802,7 @@ impl NetworkMonitorTui {
                     || self.credential_form.ssh_key_path.trim().is_empty()
                 {
                     self.set_status_message("Username and SSH key path are required");
-                    return;
+                    return false;
                 }
                 SshCredential::Key {
                     username: self.credential_form.username.clone(),
@@ -2817,7 +2821,7 @@ impl NetworkMonitorTui {
                     || self.credential_form.ssh_key_data.trim().is_empty()
                 {
                     self.set_status_message("Username and SSH key data are required");
-                    return;
+                    return false;
                 }
                 SshCredential::KeyData {
                     username: self.credential_form.username.clone(),
@@ -2868,9 +2872,11 @@ impl NetworkMonitorTui {
                 self.reload_credentials();
                 self.credential_form = CredentialForm::default();
                 self.editing_credential_id = None;
+                true
             }
             Err(e) => {
                 self.set_status_message(format!("Failed to save credential: {}", e));
+                false
             }
         }
     }
@@ -3046,7 +3052,8 @@ impl NetworkMonitorTui {
         }
     }
 
-    fn add_node_from_form(&mut self) {
+    /// Saves the add-node form. Returns `true` if the node was created.
+    fn add_node_from_form(&mut self) -> bool {
         match self.node_form.to_node_detail() {
             Ok(detail) => {
                 let node = Node {
@@ -3076,46 +3083,62 @@ impl NetworkMonitorTui {
 
                         self.nodes.push(new_node);
                         self.set_status_message("Node added successfully");
+                        true
                     }
                     Err(e) => {
                         self.set_status_message(format!("Error adding node: {}", e));
+                        false
                     }
                 }
             }
             Err(e) => {
                 self.set_status_message(format!("Invalid data: {}", e));
+                false
             }
         }
     }
 
-    fn update_node_from_form(&mut self) {
-        if let Some(node_id) = self.editing_node_id {
-            match self.node_form.to_node_detail() {
-                Ok(detail) => {
-                    if let Some(node) = self.nodes.iter_mut().find(|n| n.id == Some(node_id)) {
-                        node.name = self.node_form.name.clone();
-                        node.detail = detail;
-                        node.monitoring_interval =
-                            self.node_form.monitoring_interval.parse().unwrap_or(5);
-                        node.credential_id = self.node_form.credential_id.clone();
+    /// Saves the edit-node form. Returns `true` if the node was updated.
+    fn update_node_from_form(&mut self) -> bool {
+        let Some(node_id) = self.editing_node_id else {
+            // Nothing is being edited; there is no form to keep open
+            return true;
+        };
 
-                        if let Err(e) = self.database.update_node(node) {
-                            self.set_status_message(format!("Error updating node: {}", e));
-                        } else {
-                            if let Some(handle) = &self.monitoring_handle {
-                                let _ = handle
-                                    .config_tx
-                                    .send(NodeConfigUpdate::Update(node.clone()));
-                            }
-                            self.set_status_message("Node updated successfully");
-                        }
-                    }
-                }
-                Err(e) => {
-                    self.set_status_message(format!("Invalid data: {}", e));
-                }
+        let detail = match self.node_form.to_node_detail() {
+            Ok(detail) => detail,
+            Err(e) => {
+                self.set_status_message(format!("Invalid data: {}", e));
+                return false;
             }
+        };
+
+        let Some(node) = self.nodes.iter_mut().find(|n| n.id == Some(node_id)) else {
+            self.set_status_message("Node no longer exists");
+            return true;
+        };
+
+        // Apply the edit to a copy first so a rejected save does not leave the
+        // on-screen node out of sync with the database
+        let mut updated = node.clone();
+        updated.name = self.node_form.name.clone();
+        updated.detail = detail;
+        updated.monitoring_interval = self.node_form.monitoring_interval.parse().unwrap_or(5);
+        updated.credential_id = self.node_form.credential_id.clone();
+
+        if let Err(e) = self.database.update_node(&updated) {
+            self.set_status_message(format!("Error updating node: {}", e));
+            return false;
         }
+
+        *node = updated;
+        if let Some(handle) = &self.monitoring_handle {
+            let _ = handle
+                .config_tx
+                .send(NodeConfigUpdate::Update(node.clone()));
+        }
+        self.set_status_message("Node updated successfully");
+        true
     }
 
     fn delete_node_at_index(&mut self, index: usize) {
@@ -3441,6 +3464,60 @@ mod tests {
     // ============================================================================
     // NetworkMonitorTui Integration Tests
     // ============================================================================
+
+    #[test]
+    fn test_enter_keeps_node_form_open_when_data_is_invalid() {
+        let temp_dir = tempdir().unwrap();
+        let database = Database::new(temp_dir.path().join("test.db")).unwrap();
+        // Construction reads the on-disk credential store; skip if unavailable
+        let Ok(mut tui) = NetworkMonitorTui::new(database) else {
+            return;
+        };
+
+        tui.state = AppState::AddNode;
+        tui.node_form = NodeForm::default();
+        tui.node_form.name = "Typed a long name".to_string();
+        tui.node_form.monitor_type = MonitorTypeForm::Tcp;
+        tui.node_form.tcp_host = "db.example.com".to_string();
+        tui.node_form.tcp_port = String::new(); // invalid: empty port
+
+        let close = tui.handle_node_form_input(KeyCode::Enter, KeyModifiers::NONE);
+
+        assert!(!close, "form must stay open after a validation failure");
+        assert_eq!(tui.node_form.name, "Typed a long name");
+        assert_eq!(tui.node_form.tcp_host, "db.example.com");
+        assert!(tui.nodes.is_empty());
+        assert!(tui.status_message.is_some());
+
+        // Fixing the field and pressing Enter again saves and closes
+        tui.node_form.tcp_port = "5432".to_string();
+        let close = tui.handle_node_form_input(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(close);
+        assert_eq!(tui.nodes.len(), 1);
+        assert_eq!(tui.nodes[0].name, "Typed a long name");
+    }
+
+    #[test]
+    fn test_enter_keeps_credential_form_open_when_name_is_empty() {
+        let temp_dir = tempdir().unwrap();
+        let database = Database::new(temp_dir.path().join("test.db")).unwrap();
+        let Ok(mut tui) = NetworkMonitorTui::new(database) else {
+            return;
+        };
+
+        tui.state = AppState::AddCredential;
+        tui.credential_form = CredentialForm::default();
+        tui.credential_form.credential_type = CredentialTypeForm::Password;
+        tui.credential_form.username = "admin".to_string();
+        tui.credential_form.password = "hunter2".to_string();
+        // name left empty
+
+        let close = tui.handle_credential_form_input(KeyCode::Enter);
+
+        assert!(!close, "form must stay open after a validation failure");
+        assert_eq!(tui.credential_form.username, "admin");
+        assert_eq!(tui.credential_form.password, "hunter2");
+    }
 
     #[test]
     fn test_network_monitor_tui_initialization() {
