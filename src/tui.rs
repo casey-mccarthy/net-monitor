@@ -316,6 +316,39 @@ enum FileDialogKind {
     Export,
 }
 
+/// Returns the index to select when moving down a list of `len` items, wrapping
+/// from the last item back to the first.
+///
+/// Returns `None` for an empty list so callers leave the selection untouched.
+/// A stale selection at or past the end wraps to the first item rather than
+/// indexing off the end.
+fn next_selection(selected: Option<usize>, len: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    Some(match selected {
+        Some(i) if i + 1 < len => i + 1,
+        Some(_) => 0,
+        None => 0,
+    })
+}
+
+/// Returns the index to select when moving up a list of `len` items, wrapping
+/// from the first item to the last.
+///
+/// Returns `None` for an empty list so callers leave the selection untouched.
+/// A stale selection past the end is clamped into range.
+fn previous_selection(selected: Option<usize>, len: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    Some(match selected {
+        Some(0) => len - 1,
+        Some(i) => (i - 1).min(len - 1),
+        None => 0,
+    })
+}
+
 pub struct NetworkMonitorTui {
     database: Database,
     nodes: Vec<Node>,
@@ -2361,32 +2394,12 @@ impl NetworkMonitorTui {
                 self.state = AppState::Help;
             }
             KeyCode::Down => {
-                let i = match self.table_state.selected() {
-                    Some(i) => {
-                        if i >= self.nodes.len() - 1 {
-                            0
-                        } else {
-                            i + 1
-                        }
-                    }
-                    None => 0,
-                };
-                if !self.nodes.is_empty() {
+                if let Some(i) = next_selection(self.table_state.selected(), self.nodes.len()) {
                     self.table_state.select(Some(i));
                 }
             }
             KeyCode::Up => {
-                let i = match self.table_state.selected() {
-                    Some(i) => {
-                        if i == 0 {
-                            self.nodes.len() - 1
-                        } else {
-                            i - 1
-                        }
-                    }
-                    None => 0,
-                };
-                if !self.nodes.is_empty() {
+                if let Some(i) = previous_selection(self.table_state.selected(), self.nodes.len()) {
                     self.table_state.select(Some(i));
                 }
             }
@@ -2554,32 +2567,15 @@ impl NetworkMonitorTui {
                 return false;
             }
             KeyCode::Down => {
-                let i = match self.list_state.selected() {
-                    Some(i) => {
-                        if i >= self.credentials.len() - 1 {
-                            0
-                        } else {
-                            i + 1
-                        }
-                    }
-                    None => 0,
-                };
-                if !self.credentials.is_empty() {
+                if let Some(i) = next_selection(self.list_state.selected(), self.credentials.len())
+                {
                     self.list_state.select(Some(i));
                 }
             }
             KeyCode::Up => {
-                let i = match self.list_state.selected() {
-                    Some(i) => {
-                        if i == 0 {
-                            self.credentials.len() - 1
-                        } else {
-                            i - 1
-                        }
-                    }
-                    None => 0,
-                };
-                if !self.credentials.is_empty() {
+                if let Some(i) =
+                    previous_selection(self.list_state.selected(), self.credentials.len())
+                {
                     self.list_state.select(Some(i));
                 }
             }
@@ -4528,5 +4524,62 @@ mod tests {
             }
             _ => panic!("Expected TCP detail"),
         }
+    }
+
+    // ============================================================================
+    // List navigation index math
+    // ============================================================================
+
+    #[test]
+    fn test_next_selection_empty_list_returns_none() {
+        // Regression: this used to compute `len - 1` on an empty list, which
+        // underflows (panic in debug, usize::MAX in release).
+        assert_eq!(next_selection(Some(0), 0), None);
+        assert_eq!(next_selection(Some(5), 0), None);
+        assert_eq!(next_selection(None, 0), None);
+    }
+
+    #[test]
+    fn test_previous_selection_empty_list_returns_none() {
+        assert_eq!(previous_selection(Some(0), 0), None);
+        assert_eq!(previous_selection(Some(5), 0), None);
+        assert_eq!(previous_selection(None, 0), None);
+    }
+
+    #[test]
+    fn test_next_selection_advances_and_wraps() {
+        assert_eq!(next_selection(Some(0), 3), Some(1));
+        assert_eq!(next_selection(Some(1), 3), Some(2));
+        // Last item wraps back to the first.
+        assert_eq!(next_selection(Some(2), 3), Some(0));
+    }
+
+    #[test]
+    fn test_previous_selection_retreats_and_wraps() {
+        assert_eq!(previous_selection(Some(2), 3), Some(1));
+        assert_eq!(previous_selection(Some(1), 3), Some(0));
+        // First item wraps to the last.
+        assert_eq!(previous_selection(Some(0), 3), Some(2));
+    }
+
+    #[test]
+    fn test_selection_with_no_prior_selection_starts_at_first() {
+        assert_eq!(next_selection(None, 3), Some(0));
+        assert_eq!(previous_selection(None, 3), Some(0));
+    }
+
+    #[test]
+    fn test_selection_on_single_item_list_stays_put() {
+        assert_eq!(next_selection(Some(0), 1), Some(0));
+        assert_eq!(previous_selection(Some(0), 1), Some(0));
+        assert_eq!(next_selection(None, 1), Some(0));
+    }
+
+    #[test]
+    fn test_stale_out_of_range_selection_is_brought_back_in_range() {
+        // A selection can outlive the rows it pointed at; neither direction
+        // should return an index past the end.
+        assert_eq!(next_selection(Some(99), 3), Some(0));
+        assert_eq!(previous_selection(Some(99), 3), Some(2));
     }
 }
