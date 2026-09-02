@@ -157,11 +157,7 @@ impl SshConnectionStrategy {
                 command.push(private_key_path.to_string_lossy().to_string());
                 command.push(format!("{}@{}", username, host));
             }
-            Some(SshCredential::KeyData {
-                username,
-                private_key_data: _,
-                ..
-            }) => {
+            Some(SshCredential::KeyData { username, .. }) => {
                 // For embedded key data, we'll write to a temp file
                 // Note: This is a simplified implementation - in production you'd want better temp file security
                 command.push("ssh".to_string());
