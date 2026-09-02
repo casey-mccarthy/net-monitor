@@ -1,9 +1,10 @@
 use crate::models::{MonitorDetail, MonitoringResult, Node, NodeStatus};
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
-use std::net::{TcpStream, ToSocketAddrs};
+use std::io::ErrorKind;
+use std::net::{IpAddr, TcpStream, ToSocketAddrs};
 use std::time::Duration;
-use tracing::info;
+use tracing::{info, warn};
 
 pub async fn check_node(node: &Node) -> Result<MonitoringResult> {
     info!("Checking node: {}", node.name);
@@ -16,12 +17,9 @@ pub async fn check_node(node: &Node) -> Result<MonitoringResult> {
         } => check_http(url, *expected_status).await,
         MonitorDetail::Ping {
             host,
-            count: _,
+            count,
             timeout,
-        } => {
-            // The `ping` crate doesn't support a `count` parameter in this function signature
-            check_ping(host, *timeout).await
-        }
+        } => check_ping(host, *count, *timeout).await,
         MonitorDetail::Tcp {
             host,
             port,
@@ -88,25 +86,104 @@ pub fn normalize_http_url(url: &str) -> String {
     }
 }
 
-async fn check_ping(host: &str, timeout: u64) -> Result<String> {
-    info!("Checking Ping for {}", host);
-    let addr = host
-        .parse::<std::net::IpAddr>()
-        .context("Invalid IP address")?;
-
-    // Use the `ping` function which is simpler and matches the older API.
-    // The `count` parameter is not supported in this version's `ping` function.
-    match ping::ping(
-        addr,
-        Some(Duration::from_secs(timeout)),
-        None,
-        None,
-        None,
-        None,
-    ) {
-        Ok(_) => Ok("Ping successful".to_string()),
-        Err(e) => Err(anyhow!("Ping failed: {}", e)),
+/// Resolves a ping target to an IP address, accepting either a literal IP or a hostname.
+pub fn resolve_ping_host(host: &str) -> Result<IpAddr> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(ip);
     }
+
+    // `to_socket_addrs` needs a port; it is irrelevant for ICMP.
+    (host, 0)
+        .to_socket_addrs()
+        .with_context(|| format!("Failed to resolve hostname: {}", host))?
+        .map(|addr| addr.ip())
+        .next()
+        .ok_or_else(|| anyhow!("No addresses found for {}", host))
+}
+
+/// True if a ping error means the host simply did not answer in time
+/// (as opposed to the socket itself being unusable).
+fn is_ping_timeout(error: &ping::Error) -> bool {
+    matches!(
+        error,
+        ping::Error::IoError { error }
+            if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock)
+    )
+}
+
+/// Sends a single ICMP echo request and returns the round-trip time.
+///
+/// Starts with the platform's default socket type (datagram on Linux/macOS,
+/// raw on Windows). Raw sockets need root or CAP_NET_RAW, and datagram ICMP
+/// sockets are disabled on some Linux distributions, so if the socket could
+/// not be used at all we retry once with the other kind. A timeout is never
+/// retried: that already means the host did not answer.
+fn send_ping(addr: IpAddr, timeout: Duration) -> std::result::Result<Duration, ping::Error> {
+    let mut first = ping::new(addr);
+    first.timeout(timeout);
+    let first_error = match first.send() {
+        Ok(reply) => return Ok(reply.rtt),
+        Err(e) if is_ping_timeout(&e) => return Err(e),
+        Err(e) => e,
+    };
+
+    let fallback_type = if std::env::consts::OS == "windows" {
+        ping::SocketType::DGRAM
+    } else {
+        ping::SocketType::RAW
+    };
+    warn!(
+        "Ping to {} could not use the default socket type ({}); retrying with {:?}",
+        addr, first_error, fallback_type
+    );
+
+    let mut second = ping::new(addr);
+    second.socket_type(fallback_type).timeout(timeout);
+    match second.send() {
+        Ok(reply) => Ok(reply.rtt),
+        // Report the original error: it describes why the normal path failed.
+        Err(e) if !is_ping_timeout(&e) => Err(first_error),
+        Err(e) => Err(e),
+    }
+}
+
+async fn check_ping(host: &str, count: u32, timeout: u64) -> Result<String> {
+    info!("Checking Ping for {}", host);
+    let addr = resolve_ping_host(host)?;
+
+    // A zero timeout would fail every attempt; a zero count would never try.
+    let timeout = Duration::from_secs(timeout.max(1));
+    let attempts = count.max(1);
+
+    let mut last_error = None;
+    for attempt in 1..=attempts {
+        match send_ping(addr, timeout) {
+            Ok(rtt) => {
+                return Ok(format!(
+                    "Ping reply from {} in {}ms (attempt {} of {})",
+                    addr,
+                    rtt.as_millis(),
+                    attempt,
+                    attempts
+                ));
+            }
+            Err(e) => {
+                let message = if is_ping_timeout(&e) {
+                    format!("no reply within {}s", timeout.as_secs())
+                } else {
+                    e.to_string()
+                };
+                last_error = Some(message);
+            }
+        }
+    }
+
+    Err(anyhow!(
+        "Ping to {} failed after {} attempt(s): {}",
+        host,
+        attempts,
+        last_error.unwrap_or_else(|| "unknown error".to_string())
+    ))
 }
 
 async fn check_tcp(host: &str, port: u16, timeout: u64) -> Result<String> {
@@ -200,6 +277,73 @@ mod tests {
             "a failed check has no latency to report"
         );
         assert!(result.details.is_some());
+    }
+
+    #[test]
+    fn test_resolve_ping_host_accepts_ipv4_literal() {
+        assert_eq!(
+            resolve_ping_host("192.0.2.10").unwrap(),
+            "192.0.2.10".parse::<IpAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_resolve_ping_host_accepts_ipv6_literal() {
+        assert_eq!(
+            resolve_ping_host("::1").unwrap(),
+            "::1".parse::<IpAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_resolve_ping_host_resolves_localhost() {
+        let ip = resolve_ping_host("localhost").unwrap();
+        assert!(ip.is_loopback());
+    }
+
+    #[test]
+    fn test_resolve_ping_host_rejects_garbage() {
+        let err = resolve_ping_host("not-a-valid-ip-address-!!!").unwrap_err();
+        assert!(err.to_string().contains("Failed to resolve hostname"));
+    }
+
+    #[test]
+    fn test_is_ping_timeout_matches_timeout_kinds() {
+        let timed_out = ping::Error::IoError {
+            error: std::io::Error::new(ErrorKind::TimedOut, "t"),
+        };
+        let would_block = ping::Error::IoError {
+            error: std::io::Error::new(ErrorKind::WouldBlock, "w"),
+        };
+        let denied = ping::Error::IoError {
+            error: std::io::Error::new(ErrorKind::PermissionDenied, "p"),
+        };
+        assert!(is_ping_timeout(&timed_out));
+        assert!(is_ping_timeout(&would_block));
+        assert!(!is_ping_timeout(&denied));
+        assert!(!is_ping_timeout(&ping::Error::InternalError));
+    }
+
+    /// Requires ICMP access (unprivileged datagram sockets or CAP_NET_RAW),
+    /// so it only runs with the network-tests feature.
+    #[cfg(feature = "network-tests")]
+    #[tokio::test]
+    async fn test_check_ping_loopback_succeeds_unprivileged() {
+        let result = check_ping("127.0.0.1", 1, 2).await.unwrap();
+        assert!(
+            result.starts_with("Ping reply from 127.0.0.1"),
+            "{}",
+            result
+        );
+    }
+
+    #[cfg(feature = "network-tests")]
+    #[tokio::test]
+    async fn test_check_ping_unreachable_reports_no_reply() {
+        // 192.0.2.0/24 (TEST-NET-1) is reserved and never routed
+        let err = check_ping("192.0.2.1", 2, 1).await.unwrap_err().to_string();
+        assert!(err.contains("after 2 attempt(s)"), "{}", err);
+        assert!(err.contains("no reply within 1s"), "{}", err);
     }
 
     #[test]
