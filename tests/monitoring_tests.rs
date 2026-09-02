@@ -66,7 +66,8 @@ async fn test_monitoring_failure_workflow() {
     let monitoring_result = check_node(&retrieved_node).await.unwrap();
     assert_eq!(monitoring_result.node_id, node_id);
     assert_eq!(monitoring_result.status, NodeStatus::Offline);
-    assert!(monitoring_result.response_time.is_some());
+    // A failed check has no latency to report
+    assert!(monitoring_result.response_time.is_none());
     assert!(monitoring_result.details.is_some());
 
     // Store the monitoring result
@@ -187,7 +188,8 @@ async fn test_monitoring_invalid_url() {
 
     assert_eq!(result.node_id, node_id);
     assert_eq!(result.status, NodeStatus::Offline);
-    assert!(result.response_time.is_some());
+    // A failed check has no latency to report
+    assert!(result.response_time.is_none());
     assert!(result.details.is_some());
 }
 
@@ -255,7 +257,8 @@ async fn test_check_node_http_failure() {
     let monitoring_result = result.unwrap();
     assert_eq!(monitoring_result.node_id, 1);
     assert_eq!(monitoring_result.status, NodeStatus::Offline);
-    assert!(monitoring_result.response_time.is_some());
+    // A failed check has no latency to report
+    assert!(monitoring_result.response_time.is_none());
     assert!(monitoring_result.details.is_some());
 }
 
@@ -284,7 +287,8 @@ async fn test_check_node_invalid_url() {
     let monitoring_result = result.unwrap();
     assert_eq!(monitoring_result.node_id, 1);
     assert_eq!(monitoring_result.status, NodeStatus::Offline);
-    assert!(monitoring_result.response_time.is_some());
+    // A failed check has no latency to report
+    assert!(monitoring_result.response_time.is_none());
     assert!(monitoring_result.details.is_some());
 }
 
@@ -451,7 +455,8 @@ async fn test_tcp_monitoring_failure() {
     let monitoring_result = result.unwrap();
     assert_eq!(monitoring_result.node_id, node_id);
     assert_eq!(monitoring_result.status, NodeStatus::Offline);
-    assert!(monitoring_result.response_time.is_some());
+    // A failed check has no latency to report
+    assert!(monitoring_result.response_time.is_none());
     assert!(monitoring_result.details.is_some());
 }
 
@@ -488,7 +493,12 @@ async fn test_tcp_monitoring_localhost() {
     assert!(result.is_ok());
     let monitoring_result = result.unwrap();
     assert_eq!(monitoring_result.node_id, node_id);
-    assert!(monitoring_result.response_time.is_some());
+    // Whether port 80 is listening depends on the machine; latency is only
+    // reported when the connection actually succeeded
+    assert_eq!(
+        monitoring_result.response_time.is_some(),
+        monitoring_result.status == NodeStatus::Online
+    );
     assert!(monitoring_result.details.is_some());
 }
 
