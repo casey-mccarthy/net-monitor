@@ -147,7 +147,10 @@ fn run_monitoring_loop(
                 node.response_time = check_result.response_time;
                 check_result.node_id = node_id;
 
-                let _ = db.update_node(node);
+                // Persist only runtime state: the user may have edited this node's
+                // configuration while the check was in flight, and writing our copy
+                // back would clobber that edit in the database.
+                let _ = db.update_node_runtime_state(node);
 
                 // Record monitoring result on confirmed status changes or first check
                 if let Some(prev_status) = previous_status {

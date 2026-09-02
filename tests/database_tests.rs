@@ -244,6 +244,55 @@ fn test_unit_delete_node() {
 }
 
 #[test]
+fn test_update_node_runtime_state_preserves_configuration() {
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+
+    // Simulate the user editing the node's configuration while a check is in flight
+    let mut edited = node.clone();
+    edited.id = Some(node_id);
+    edited.name = "Renamed by user".to_string();
+    edited.monitoring_interval = 123;
+    edited.detail = MonitorDetail::Http {
+        url: "https://edited.example.com".to_string(),
+        expected_status: 204,
+    };
+    test_db.db.update_node(&edited).unwrap();
+
+    // The monitoring engine still holds the original (stale) configuration but
+    // has fresh runtime state from the check it just finished
+    let mut stale = node.clone();
+    stale.id = Some(node_id);
+    stale.status = NodeStatus::Online;
+    stale.last_check = Some(Utc::now());
+    stale.response_time = Some(42);
+    stale.consecutive_failures = 0;
+    test_db.db.update_node_runtime_state(&stale).unwrap();
+
+    let stored = test_db.db.get_all_nodes().unwrap().remove(0);
+
+    // Runtime state was written...
+    assert_eq!(stored.status, NodeStatus::Online);
+    assert!(stored.last_check.is_some());
+    assert_eq!(stored.response_time, Some(42));
+    assert_eq!(stored.consecutive_failures, 0);
+
+    // ...but the user's configuration edit survived
+    assert_eq!(stored.name, "Renamed by user");
+    assert_eq!(stored.monitoring_interval, 123);
+    assert_eq!(stored.detail, edited.detail);
+}
+
+#[test]
+fn test_update_node_runtime_state_requires_id() {
+    let test_db = TestDatabase::new();
+    let node = fixtures::unit_test_http_node();
+    assert!(node.id.is_none());
+    assert!(test_db.db.update_node_runtime_state(&node).is_err());
+}
+
+#[test]
 fn test_add_monitoring_result() {
     let test_db = TestDatabase::new();
     let node = fixtures::unit_test_http_node();
