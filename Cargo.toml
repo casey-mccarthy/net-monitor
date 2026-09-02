@@ -1,6 +1,6 @@
 [package]
 name = "net-monitor"
-version = "1.4.0"
+version = "1.4.1"
 edition = "2021"
 authors = ["Casey"]
 description = "A network monitoring tool with a TUI interface"
