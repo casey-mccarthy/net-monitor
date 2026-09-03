@@ -318,37 +318,35 @@ fn test_credential_summary_serialization() {
 
 // ========== FileCredentialStore Tests ==========
 
+/// Opens a store backed by a file inside `temp_dir`, never the real data directory.
+fn temp_store(temp_dir: &TempDir, password: &str) -> FileCredentialStore {
+    FileCredentialStore::with_path(
+        temp_dir.path().join("credentials.enc"),
+        password.to_string(),
+    )
+    .expect("failed to create temp credential store")
+}
+
 #[test]
-fn test_file_credential_store_new() {
-    // Note: FileCredentialStore uses ProjectDirs which may not respect temp HOME
-    // This test verifies the constructor works, but may fail if a credentials file
-    // from a previous test exists with a different password
-    let store = FileCredentialStore::new("master_password".to_string());
+fn test_file_credential_store_new_creates_parent_directory() {
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir
+        .path()
+        .join("nested")
+        .join("dir")
+        .join("credentials.enc");
 
-    // Store creation should either succeed with new file or fail if existing file
-    // has different password - both are acceptable outcomes in test environment
-    if store.is_err() {
-        // If it fails, it's likely due to pre-existing encrypted file
-        // This is acceptable in test environments
-        return;
-    }
-
-    // If it succeeds, verify we got a store
+    let store = FileCredentialStore::with_path(path.clone(), "master_password".to_string());
     assert!(store.is_ok());
+    assert!(path.parent().unwrap().is_dir());
+    // Nothing is written until a credential is stored
+    assert!(!path.exists());
 }
 
 #[test]
 fn test_file_credential_store_store_and_retrieve() {
     let temp_dir = TempDir::new().unwrap();
-    let _lock = ENV_MUTEX.lock().unwrap();
-    std::env::set_var("HOME", temp_dir.path());
-
-    // May fail if credentials file exists from previous test
-    let store_result = FileCredentialStore::new("test_password".to_string());
-    if store_result.is_err() {
-        return; // Skip test if pre-existing encrypted file
-    }
-    let mut store = store_result.unwrap();
+    let mut store = temp_store(&temp_dir, "test_password");
 
     let credential = SshCredential::Password {
         username: "storeuser".to_string(),
@@ -363,53 +361,45 @@ fn test_file_credential_store_store_and_retrieve() {
         )
         .unwrap();
 
-    let retrieved = store.get_credential(&id).unwrap();
-    assert!(retrieved.is_some());
-    let stored = retrieved.unwrap();
+    let stored = store
+        .get_credential(&id)
+        .unwrap()
+        .expect("credential missing");
     assert_eq!(stored.name, "Test Store");
     assert_eq!(stored.description, Some("Store test".to_string()));
-
-    drop(temp_dir);
+    assert!(temp_dir.path().join("credentials.enc").exists());
 }
 
 #[test]
 fn test_file_credential_store_list() {
     let temp_dir = TempDir::new().unwrap();
-    let _lock = ENV_MUTEX.lock().unwrap();
-    std::env::set_var("HOME", temp_dir.path());
+    let mut store = temp_store(&temp_dir, "test_password");
 
-    let store_result = FileCredentialStore::new("test_password".to_string());
-    if store_result.is_err() {
-        return; // Skip if pre-existing encrypted file
-    }
-    let mut store = store_result.unwrap();
+    store
+        .store_credential("Cred 1".to_string(), None, SshCredential::Default)
+        .unwrap();
+    store
+        .store_credential(
+            "Cred 2".to_string(),
+            Some("Second".to_string()),
+            SshCredential::Default,
+        )
+        .unwrap();
 
-    // Store multiple credentials (may fail due to file system issues in test)
-    let _ = store.store_credential("Cred 1".to_string(), None, SshCredential::Default);
-    let _ = store.store_credential(
-        "Cred 2".to_string(),
-        Some("Second".to_string()),
-        SshCredential::Default,
-    );
-
-    // List credentials (should work even if save failed, as data is in memory)
-    let list = store.list_credentials();
-    assert!(list.is_ok()); // Just verify the operation works
-
-    drop(temp_dir);
+    let mut names: Vec<String> = store
+        .list_credentials()
+        .unwrap()
+        .into_iter()
+        .map(|c| c.name)
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["Cred 1", "Cred 2"]);
 }
 
 #[test]
 fn test_file_credential_store_update() {
     let temp_dir = TempDir::new().unwrap();
-    let _lock = ENV_MUTEX.lock().unwrap();
-    std::env::set_var("HOME", temp_dir.path());
-
-    let store_result = FileCredentialStore::new("test_password".to_string());
-    if store_result.is_err() {
-        return;
-    }
-    let mut store = store_result.unwrap();
+    let mut store = temp_store(&temp_dir, "test_password");
 
     let id = store
         .store_credential("Original".to_string(), None, SshCredential::Default)
@@ -432,49 +422,28 @@ fn test_file_credential_store_update() {
     let retrieved = store.get_credential(&id).unwrap().unwrap();
     assert_eq!(retrieved.name, "Updated");
     assert_eq!(retrieved.description, Some("Updated desc".to_string()));
-
-    drop(temp_dir);
+    assert_eq!(retrieved.credential.username(), Some("updated"));
 }
 
 #[test]
 fn test_file_credential_store_delete() {
     let temp_dir = TempDir::new().unwrap();
-    let _lock = ENV_MUTEX.lock().unwrap();
-    std::env::set_var("HOME", temp_dir.path());
+    let mut store = temp_store(&temp_dir, "test_password");
 
-    let store_result = FileCredentialStore::new("test_password".to_string());
-    if store_result.is_err() {
-        return;
-    }
-    let mut store = store_result.unwrap();
+    let id = store
+        .store_credential("To Delete".to_string(), None, SshCredential::Default)
+        .unwrap();
+    assert!(store.get_credential(&id).unwrap().is_some());
 
-    // Store credential (may fail due to file system issues)
-    let result = store.store_credential("To Delete".to_string(), None, SshCredential::Default);
-
-    if let Ok(id) = result {
-        assert!(store.get_credential(&id).unwrap().is_some());
-
-        // Delete (may fail due to file system issues)
-        let _ = store.delete_credential(&id);
-
-        // Credential should be gone from memory
-        assert!(store.get_credential(&id).unwrap().is_none());
-    }
-
-    drop(temp_dir);
+    store.delete_credential(&id).unwrap();
+    assert!(store.get_credential(&id).unwrap().is_none());
+    assert!(store.list_credentials().unwrap().is_empty());
 }
 
 #[test]
 fn test_file_credential_store_mark_used() {
     let temp_dir = TempDir::new().unwrap();
-    let _lock = ENV_MUTEX.lock().unwrap();
-    std::env::set_var("HOME", temp_dir.path());
-
-    let store_result = FileCredentialStore::new("test_password".to_string());
-    if store_result.is_err() {
-        return;
-    }
-    let mut store = store_result.unwrap();
+    let mut store = temp_store(&temp_dir, "test_password");
 
     let id = store
         .store_credential("Mark Used".to_string(), None, SshCredential::Default)
@@ -483,30 +452,16 @@ fn test_file_credential_store_mark_used() {
     let before = store.get_credential(&id).unwrap().unwrap();
     assert!(before.last_used.is_none());
 
-    // Mark as used (this updates in memory and saves to file)
-    let result = store.mark_credential_used(&id);
+    store.mark_credential_used(&id).unwrap();
 
-    // If the save fails due to file system issues in test environment, that's okay
-    // We're mainly testing the logic, not the file I/O
-    if result.is_ok() {
-        let after = store.get_credential(&id).unwrap().unwrap();
-        assert!(after.last_used.is_some());
-    }
-
-    drop(temp_dir);
+    let after = store.get_credential(&id).unwrap().unwrap();
+    assert!(after.last_used.is_some());
 }
 
 #[test]
 fn test_file_credential_store_update_nonexistent() {
     let temp_dir = TempDir::new().unwrap();
-    let _lock = ENV_MUTEX.lock().unwrap();
-    std::env::set_var("HOME", temp_dir.path());
-
-    let store_result = FileCredentialStore::new("test_password".to_string());
-    if store_result.is_err() {
-        return;
-    }
-    let mut store = store_result.unwrap();
+    let mut store = temp_store(&temp_dir, "test_password");
 
     let result = store.update_credential(
         &"nonexistent_id".to_string(),
@@ -516,72 +471,79 @@ fn test_file_credential_store_update_nonexistent() {
     );
 
     assert!(result.is_err());
-
-    drop(temp_dir);
 }
 
 #[test]
 fn test_file_credential_store_delete_nonexistent() {
     let temp_dir = TempDir::new().unwrap();
-    let _lock = ENV_MUTEX.lock().unwrap();
-    std::env::set_var("HOME", temp_dir.path());
-
-    let store_result = FileCredentialStore::new("test_password".to_string());
-    if store_result.is_err() {
-        return;
-    }
-    let mut store = store_result.unwrap();
+    let mut store = temp_store(&temp_dir, "test_password");
 
     let result = store.delete_credential(&"nonexistent_id".to_string());
     assert!(result.is_err());
-
-    drop(temp_dir);
 }
 
 #[test]
 fn test_file_credential_store_mark_used_nonexistent() {
     let temp_dir = TempDir::new().unwrap();
-    let _lock = ENV_MUTEX.lock().unwrap();
-    std::env::set_var("HOME", temp_dir.path());
-
-    let store_result = FileCredentialStore::new("test_password".to_string());
-    if store_result.is_err() {
-        return;
-    }
-    let mut store = store_result.unwrap();
+    let mut store = temp_store(&temp_dir, "test_password");
 
     let result = store.mark_credential_used(&"nonexistent_id".to_string());
     assert!(result.is_err());
-
-    drop(temp_dir);
 }
 
 #[test]
-fn test_file_credential_store_encryption_round_trip() {
+fn test_file_credential_store_persists_across_reopen() {
     let temp_dir = TempDir::new().unwrap();
-    let _lock = ENV_MUTEX.lock().unwrap();
-    std::env::set_var("HOME", temp_dir.path());
+    let path = temp_dir.path().join("credentials.enc");
 
-    // Create store and add credential
-    let store_result = FileCredentialStore::new("encryption_test".to_string());
-    if store_result.is_err() {
-        return;
-    }
-    let mut store = store_result.unwrap();
-    let credential = SshCredential::Password {
-        username: "encrypt_user".to_string(),
-        password: "encrypt_pass".into(),
+    let id = {
+        let mut store =
+            FileCredentialStore::with_path(path.clone(), "encryption_test".to_string()).unwrap();
+        let credential = SshCredential::Password {
+            username: "encrypt_user".to_string(),
+            password: "encrypt_pass".into(),
+        };
+        store
+            .store_credential("Encrypted".to_string(), None, credential)
+            .unwrap()
     };
-    let id = store
-        .store_credential("Encrypted".to_string(), None, credential)
-        .unwrap();
 
-    // Retrieve from the same store instance to verify encryption/decryption works
-    let retrieved = store.get_credential(&id).unwrap();
-    assert!(retrieved.is_some());
-    assert_eq!(retrieved.unwrap().name, "Encrypted");
+    // The file on disk must not contain the secret in plaintext
+    let raw = fs::read(&path).unwrap();
+    assert!(!raw.windows(12).any(|w| w == b"encrypt_pass"));
 
-    drop(temp_dir);
+    // Reopening with the same password decrypts and restores the credential
+    let reopened =
+        FileCredentialStore::with_path(path.clone(), "encryption_test".to_string()).unwrap();
+    let stored = reopened
+        .get_credential(&id)
+        .unwrap()
+        .expect("credential lost");
+    assert_eq!(stored.name, "Encrypted");
+    match &stored.credential {
+        SshCredential::Password { username, password } => {
+            assert_eq!(username, "encrypt_user");
+            assert_eq!(password.as_str(), "encrypt_pass");
+        }
+        _ => panic!("expected password credential"),
+    }
+}
+
+#[test]
+fn test_file_credential_store_rejects_wrong_password() {
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("credentials.enc");
+
+    {
+        let mut store =
+            FileCredentialStore::with_path(path.clone(), "right_password".to_string()).unwrap();
+        store
+            .store_credential("Secret".to_string(), None, SshCredential::Default)
+            .unwrap();
+    }
+
+    let result = FileCredentialStore::with_path(path, "wrong_password".to_string());
+    assert!(result.is_err());
 }
 
 // ========== SSH Key Utilities Tests ==========
