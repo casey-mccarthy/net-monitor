@@ -458,23 +458,38 @@ impl NetworkMonitorTui {
     }
 
     pub fn run(&mut self) -> Result<()> {
+        // If anything panics while the terminal is in raw mode and on the
+        // alternate screen, the user's shell is left unusable (no echo, no
+        // line editing) until they run `reset`. Restore the terminal first,
+        // then let the default hook print the panic message normally.
+        let original_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            Self::restore_terminal();
+            original_hook(info);
+        }));
+
         // Setup terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        if let Err(e) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
+            let _ = disable_raw_mode();
+            return Err(e.into());
+        }
         let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend)?;
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(e) => {
+                Self::restore_terminal();
+                return Err(e.into());
+            }
+        };
 
         let result = self.run_app(&mut terminal);
 
-        // Restore terminal
-        disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )?;
-        terminal.show_cursor()?;
+        // Restore terminal. Try every step even if an earlier one fails so a
+        // single error cannot leave the shell half-restored.
+        Self::restore_terminal();
+        let _ = terminal.show_cursor();
 
         // Stop monitoring
         if let Err(e) = self.stop_monitoring() {
@@ -492,6 +507,14 @@ impl NetworkMonitorTui {
         target.last_check = source.last_check;
         target.response_time = source.response_time;
         target.consecutive_failures = source.consecutive_failures;
+    }
+
+    /// Puts the terminal back into its normal state. Safe to call more than
+    /// once and from a panic hook; failures are ignored because there is
+    /// nothing better to do with them at that point.
+    fn restore_terminal() {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
     }
 
     fn run_app<B: ratatui::backend::Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
@@ -651,19 +674,23 @@ impl NetworkMonitorTui {
             if let Some(action) = self.deferred_action.take() {
                 match action {
                     DeferredAction::ShowImportDialog => {
-                        if let Some(path) =
-                            self.show_file_dialog(FileDialogKind::Import, terminal)?
-                        {
-                            self.import_file_path = Some(path);
-                            self.import_mode_selected = 0;
-                            self.state = AppState::ImportModeSelect;
+                        match self.show_file_dialog(FileDialogKind::Import, terminal)? {
+                            Some(path) => {
+                                self.import_file_path = Some(path);
+                                self.import_mode_selected = 0;
+                                self.state = AppState::ImportModeSelect;
+                            }
+                            None => self.set_status_message(
+                                "Import cancelled (no file chosen or no file dialog available)",
+                            ),
                         }
                     }
                     DeferredAction::ShowExportDialog => {
-                        if let Some(path) =
-                            self.show_file_dialog(FileDialogKind::Export, terminal)?
-                        {
-                            self.export_nodes_to_path(&path);
+                        match self.show_file_dialog(FileDialogKind::Export, terminal)? {
+                            Some(path) => self.export_nodes_to_path(&path),
+                            None => self.set_status_message(
+                                "Export cancelled (no file chosen or no file dialog available)",
+                            ),
                         }
                     }
                 }
@@ -678,9 +705,11 @@ impl NetworkMonitorTui {
         kind: FileDialogKind,
         terminal: &mut Terminal<B>,
     ) -> Result<Option<PathBuf>> {
-        // Temporarily leave TUI mode so the OS file dialog can appear
+        // Temporarily leave TUI mode so the OS file dialog can appear. Mouse
+        // capture must go too, otherwise clicks while the dialog is open are
+        // echoed into the cooked-mode terminal as escape sequences.
         disable_raw_mode()?;
-        execute!(io::stdout(), LeaveAlternateScreen)?;
+        execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
 
         let result = match kind {
             FileDialogKind::Import => rfd::FileDialog::new()
@@ -693,7 +722,7 @@ impl NetworkMonitorTui {
         };
 
         // Re-enter TUI mode
-        execute!(io::stdout(), EnterAlternateScreen)?;
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
         enable_raw_mode()?;
         terminal.clear()?;
 
