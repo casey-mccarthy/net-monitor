@@ -389,7 +389,8 @@ pub struct NetworkMonitorTui {
     previous_state: Option<AppState>,
     // Reorder mode
     reorder_original_index: Option<usize>,
-    reorder_original_nodes: Option<Vec<Node>>,
+    /// Node ids in their order before reorder mode started, used to undo on cancel
+    reorder_original_order: Option<Vec<Option<i64>>>,
 }
 
 impl NetworkMonitorTui {
@@ -442,7 +443,7 @@ impl NetworkMonitorTui {
             last_blink_time: Instant::now(),
             previous_state: None,
             reorder_original_index: None,
-            reorder_original_nodes: None,
+            reorder_original_order: None,
         };
 
         // Select first node if any exist
@@ -2399,7 +2400,8 @@ impl NetworkMonitorTui {
                 if self.nodes.len() > 1 {
                     if let Some(selected) = self.table_state.selected() {
                         self.reorder_original_index = Some(selected);
-                        self.reorder_original_nodes = Some(self.nodes.clone());
+                        self.reorder_original_order =
+                            Some(self.nodes.iter().map(|n| n.id).collect());
                         self.state = AppState::Reorder;
                     }
                 }
@@ -2441,13 +2443,16 @@ impl NetworkMonitorTui {
                 // Confirm: persist order and return to Main
                 self.persist_display_order();
                 self.reorder_original_index = None;
-                self.reorder_original_nodes = None;
+                self.reorder_original_order = None;
                 return true;
             }
             KeyCode::Esc => {
-                // Cancel: restore snapshot
-                if let Some(original_nodes) = self.reorder_original_nodes.take() {
-                    self.nodes = original_nodes;
+                // Cancel: put the nodes back in their original order. Only the
+                // order is restored; the nodes themselves keep the status and
+                // latency updates that arrived while reorder mode was open.
+                if let Some(original_order) = self.reorder_original_order.take() {
+                    let current = std::mem::take(&mut self.nodes);
+                    self.nodes = restore_node_order(&original_order, current);
                 }
                 if let Some(original_index) = self.reorder_original_index.take() {
                     self.table_state.select(Some(original_index));
@@ -2456,7 +2461,7 @@ impl NetworkMonitorTui {
             }
             KeyCode::Down => {
                 if let Some(selected) = self.table_state.selected() {
-                    if selected < self.nodes.len() - 1 {
+                    if selected + 1 < self.nodes.len() {
                         self.nodes.swap(selected, selected + 1);
                         self.table_state.select(Some(selected + 1));
                     }
@@ -3493,6 +3498,19 @@ fn select_previous_row(state: &mut TableState, row_count: usize) {
     state.select(Some(previous));
 }
 
+/// Reorders `nodes` to follow `original_order` (a list of node ids). Nodes whose
+/// id is not in the list keep their relative order and are appended at the end.
+fn restore_node_order(original_order: &[Option<i64>], mut nodes: Vec<Node>) -> Vec<Node> {
+    let mut ordered = Vec::with_capacity(nodes.len());
+    for id in original_order {
+        if let Some(pos) = nodes.iter().position(|n| &n.id == id) {
+            ordered.push(nodes.remove(pos));
+        }
+    }
+    ordered.extend(nodes);
+    ordered
+}
+
 fn format_duration(duration_ms: i64) -> String {
     let seconds = duration_ms / 1000;
     let minutes = seconds / 60;
@@ -3548,6 +3566,25 @@ mod tests {
             name: "n".to_string(),
             detail: MonitorDetail::Http {
                 url: "https://example.com".to_string(),
+                expected_status: 200,
+            },
+            status,
+            last_check: None,
+            response_time,
+            monitoring_interval: 60,
+            credential_id: None,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
+        }
+    }
+
+    fn reorder_test_node(id: i64, status: NodeStatus, response_time: Option<u64>) -> Node {
+        Node {
+            id: Some(id),
+            name: format!("node-{}", id),
+            detail: MonitorDetail::Http {
+                url: format!("https://{}.example.com", id),
                 expected_status: 200,
             },
             status,
@@ -3754,6 +3791,54 @@ mod tests {
         assert_eq!(state.selected(), Some(0));
         select_previous_row(&mut state, 1);
         assert_eq!(state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_restore_node_order_keeps_live_state() {
+        let original_order = vec![Some(1), Some(2), Some(3)];
+
+        // While reorder mode was open the user moved node 3 to the top and the
+        // engine reported node 2 going offline
+        let current = vec![
+            reorder_test_node(3, NodeStatus::Online, Some(12)),
+            reorder_test_node(1, NodeStatus::Online, Some(20)),
+            reorder_test_node(2, NodeStatus::Offline, Some(30000)),
+        ];
+
+        let restored = restore_node_order(&original_order, current);
+
+        let ids: Vec<Option<i64>> = restored.iter().map(|n| n.id).collect();
+        assert_eq!(ids, original_order, "order must be restored");
+        assert_eq!(
+            restored[1].status,
+            NodeStatus::Offline,
+            "cancel must not revert a status update that arrived during reorder"
+        );
+        assert_eq!(restored[1].response_time, Some(30000));
+    }
+
+    #[test]
+    fn test_restore_node_order_appends_unknown_nodes() {
+        let original_order = vec![Some(2), Some(1)];
+        let current = vec![
+            reorder_test_node(1, NodeStatus::Online, None),
+            reorder_test_node(9, NodeStatus::Online, None),
+            reorder_test_node(2, NodeStatus::Online, None),
+        ];
+
+        let restored = restore_node_order(&original_order, current);
+        let ids: Vec<Option<i64>> = restored.iter().map(|n| n.id).collect();
+        assert_eq!(ids, vec![Some(2), Some(1), Some(9)]);
+    }
+
+    #[test]
+    fn test_restore_node_order_ignores_missing_ids() {
+        let original_order = vec![Some(5), Some(1)];
+        let current = vec![reorder_test_node(1, NodeStatus::Online, None)];
+
+        let restored = restore_node_order(&original_order, current);
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].id, Some(1));
     }
 
     #[test]
