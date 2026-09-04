@@ -16,7 +16,6 @@ fn test_node_import_export_workflow() {
         name: node.name.clone(),
         detail: node.detail.clone(),
         monitoring_interval: node.monitoring_interval,
-        credential_id: None,
         max_check_attempts: node.max_check_attempts,
         retry_interval: node.retry_interval,
     };
@@ -40,7 +39,6 @@ fn test_node_import_export_workflow() {
         last_check: None,
         response_time: None,
         monitoring_interval: imported_node.monitoring_interval,
-        credential_id: imported_node.credential_id,
         consecutive_failures: 0,
         max_check_attempts: imported_node.max_check_attempts,
         retry_interval: imported_node.retry_interval,
@@ -74,7 +72,6 @@ fn test_export_multiple_nodes_to_json() {
             name: n.name.clone(),
             detail: n.detail.clone(),
             monitoring_interval: n.monitoring_interval,
-            credential_id: n.credential_id.clone(),
             max_check_attempts: n.max_check_attempts,
             retry_interval: n.retry_interval,
         })
@@ -94,7 +91,8 @@ fn test_export_multiple_nodes_to_json() {
 fn test_import_nodes_from_json() {
     let test_db = TestDatabase::new();
 
-    // Create JSON representation of nodes
+    // Create JSON representation of nodes. The first entry carries the
+    // legacy `credential_id` field from older exports, which must be ignored.
     let json = r#"[
         {
             "name": "Imported HTTP Node",
@@ -114,8 +112,7 @@ fn test_import_nodes_from_json() {
                 "count": 4,
                 "timeout": 5
             },
-            "monitoring_interval": 30,
-            "credential_id": null
+            "monitoring_interval": 30
         }
     ]"#;
 
@@ -133,7 +130,6 @@ fn test_import_nodes_from_json() {
             last_check: None,
             response_time: None,
             monitoring_interval: import.monitoring_interval,
-            credential_id: import.credential_id,
             consecutive_failures: 0,
             max_check_attempts: import.max_check_attempts,
             retry_interval: import.retry_interval,
@@ -162,7 +158,6 @@ fn test_node_import_preserves_detail_types() {
         name: http_node.name.clone(),
         detail: http_node.detail.clone(),
         monitoring_interval: http_node.monitoring_interval,
-        credential_id: None,
         max_check_attempts: 3,
         retry_interval: 15,
     };
@@ -177,7 +172,6 @@ fn test_node_import_preserves_detail_types() {
         name: ping_node.name.clone(),
         detail: ping_node.detail.clone(),
         monitoring_interval: ping_node.monitoring_interval,
-        credential_id: None,
         max_check_attempts: 3,
         retry_interval: 15,
     };

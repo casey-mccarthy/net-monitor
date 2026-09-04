@@ -245,7 +245,6 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 60,
-            credential_id: None,
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,

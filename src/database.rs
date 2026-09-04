@@ -37,7 +37,6 @@ impl Database {
                 last_check TEXT,
                 response_time INTEGER,
                 monitoring_interval INTEGER NOT NULL DEFAULT 5,
-                credential_id TEXT,
                 http_url TEXT,
                 http_expected_status INTEGER,
                 ping_host TEXT,
@@ -86,9 +85,6 @@ impl Database {
             [],
         )?;
 
-        // Add credential_id column to existing nodes table if it doesn't exist
-        self.migrate_credential_column(&conn)?;
-
         // Add TCP columns to existing nodes table if they don't exist
         self.migrate_tcp_columns(&conn)?;
 
@@ -100,25 +96,6 @@ impl Database {
 
         // Add retry tracking columns
         self.migrate_retry_columns(&conn)?;
-
-        Ok(())
-    }
-
-    /// Migrate to add credential_id column if it doesn't exist
-    fn migrate_credential_column(&self, conn: &Connection) -> Result<()> {
-        // Check if credential_id column already exists
-        let mut stmt = conn.prepare("PRAGMA table_info(nodes)")?;
-        let column_exists = stmt
-            .query_map([], |row| {
-                let column_name: String = row.get(1)?;
-                Ok(column_name)
-            })?
-            .any(|name| name.unwrap_or_default() == "credential_id");
-
-        if !column_exists {
-            conn.execute("ALTER TABLE nodes ADD COLUMN credential_id TEXT", [])?;
-            info!("Added credential_id column to nodes table");
-        }
 
         Ok(())
     }
@@ -265,15 +242,6 @@ impl Database {
 
     /// Adds a new node to the database
     pub fn add_node(&self, node: &Node) -> Result<i64> {
-        // Validate: HTTP nodes cannot have credentials (SSH-only feature)
-        if matches!(node.detail, crate::models::MonitorDetail::Http { .. })
-            && node.credential_id.is_some()
-        {
-            return Err(anyhow::anyhow!(
-                "HTTP/HTTPS targets do not support credentials. Credentials are only supported for SSH-based connections (Ping, TCP)."
-            ));
-        }
-
         let conn = self.get_connection()?;
         let (
             monitor_type,
@@ -292,11 +260,11 @@ impl Database {
         conn.execute(
             "INSERT INTO nodes (
                 name, monitor_type, status, last_check, response_time, monitoring_interval,
-                credential_id, http_url, http_expected_status, ping_host, ping_count, ping_timeout,
+                http_url, http_expected_status, ping_host, ping_count, ping_timeout,
                 tcp_host, tcp_port, tcp_timeout, display_order,
                 consecutive_failures, max_check_attempts, retry_interval
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                (SELECT COALESCE(MAX(display_order), -1) + 1 FROM nodes), ?16, ?17, ?18)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                (SELECT COALESCE(MAX(display_order), -1) + 1 FROM nodes), ?15, ?16, ?17)",
             params![
                 node.name,
                 monitor_type,
@@ -304,7 +272,6 @@ impl Database {
                 node.last_check.map(|dt| dt.to_rfc3339()),
                 node.response_time,
                 node.monitoring_interval,
-                node.credential_id,
                 http_url,
                 http_expected_status,
                 ping_host,
@@ -323,15 +290,6 @@ impl Database {
 
     /// Updates an existing node in the database
     pub fn update_node(&self, node: &Node) -> Result<()> {
-        // Validate: HTTP nodes cannot have credentials (SSH-only feature)
-        if matches!(node.detail, crate::models::MonitorDetail::Http { .. })
-            && node.credential_id.is_some()
-        {
-            return Err(anyhow::anyhow!(
-                "HTTP/HTTPS targets do not support credentials. Credentials are only supported for SSH-based connections (Ping, TCP)."
-            ));
-        }
-
         let conn = self.get_connection()?;
         let (
             monitor_type,
@@ -350,11 +308,11 @@ impl Database {
         conn.execute(
             "UPDATE nodes SET
                 name = ?1, monitor_type = ?2, status = ?3, last_check = ?4, response_time = ?5,
-                monitoring_interval = ?6, credential_id = ?7, http_url = ?8, http_expected_status = ?9,
-                ping_host = ?10, ping_count = ?11, ping_timeout = ?12,
-                tcp_host = ?13, tcp_port = ?14, tcp_timeout = ?15,
-                consecutive_failures = ?16, max_check_attempts = ?17, retry_interval = ?18
-            WHERE id = ?19",
+                monitoring_interval = ?6, http_url = ?7, http_expected_status = ?8,
+                ping_host = ?9, ping_count = ?10, ping_timeout = ?11,
+                tcp_host = ?12, tcp_port = ?13, tcp_timeout = ?14,
+                consecutive_failures = ?15, max_check_attempts = ?16, retry_interval = ?17
+            WHERE id = ?18",
             params![
                 node.name,
                 monitor_type,
@@ -362,7 +320,6 @@ impl Database {
                 node.last_check.map(|dt| dt.to_rfc3339()),
                 node.response_time,
                 node.monitoring_interval,
-                node.credential_id,
                 http_url,
                 http_expected_status,
                 ping_host,
@@ -412,7 +369,7 @@ impl Database {
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare(
             "SELECT id, name, monitor_type, status, last_check, response_time, monitoring_interval,
-                    credential_id, http_url, http_expected_status, ping_host, ping_count, ping_timeout,
+                    http_url, http_expected_status, ping_host, ping_count, ping_timeout,
                     tcp_host, tcp_port, tcp_timeout, consecutive_failures, max_check_attempts, retry_interval
              FROM nodes ORDER BY display_order, name",
         )?;
@@ -742,7 +699,6 @@ impl Database {
             last_check,
             response_time: row.get("response_time")?,
             monitoring_interval: row.get("monitoring_interval")?,
-            credential_id: row.get("credential_id")?,
             consecutive_failures: row.get("consecutive_failures").unwrap_or(0),
             max_check_attempts: row.get("max_check_attempts").unwrap_or(3),
             retry_interval: row.get("retry_interval").unwrap_or(15),

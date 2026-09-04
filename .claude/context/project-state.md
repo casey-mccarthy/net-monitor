@@ -85,7 +85,7 @@ This document maintains the current state of the net-monitor project for Claude 
 ## Database Schema
 
 **Current Version**: 3  
-**Tables**: nodes, monitoring_results, credentials, migrations
+**Tables**: nodes, monitoring_results, status_changes
 
 See `.claude/architecture/database-schema.md` for details.
 

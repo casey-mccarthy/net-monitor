@@ -85,7 +85,6 @@ fn test_node_creation() {
         last_check: Some(Utc::now()),
         response_time: Some(150),
         monitoring_interval: 60,
-        credential_id: None,
         consecutive_failures: 0,
         max_check_attempts: 3,
         retry_interval: 15,
@@ -96,7 +95,6 @@ fn test_node_creation() {
     assert_eq!(node.status, NodeStatus::Online);
     assert_eq!(node.response_time, Some(150));
     assert_eq!(node.monitoring_interval, 60);
-    assert_eq!(node.credential_id, None);
 }
 
 #[test]
@@ -113,7 +111,6 @@ fn test_node_serialization() {
         last_check: Some(Utc::now()),
         response_time: Some(150),
         monitoring_interval: 60,
-        credential_id: None,
         consecutive_failures: 0,
         max_check_attempts: 3,
         retry_interval: 15,
@@ -157,14 +154,12 @@ fn test_node_import_creation() {
             expected_status: 200,
         },
         monitoring_interval: 60,
-        credential_id: None,
         max_check_attempts: 3,
         retry_interval: 15,
     };
 
     assert_eq!(node_import.name, "Test Node");
     assert_eq!(node_import.monitoring_interval, 60);
-    assert_eq!(node_import.credential_id, None);
 }
 
 #[test]
@@ -176,7 +171,6 @@ fn test_node_import_serialization() {
             expected_status: 200,
         },
         monitoring_interval: 60,
-        credential_id: None,
         max_check_attempts: 3,
         retry_interval: 15,
     };
@@ -523,7 +517,6 @@ fn test_node_with_tcp_detail() {
         last_check: None,
         response_time: None,
         monitoring_interval: 30,
-        credential_id: Some("cred_123".to_string()),
         consecutive_failures: 0,
         max_check_attempts: 3,
         retry_interval: 15,
@@ -531,7 +524,6 @@ fn test_node_with_tcp_detail() {
 
     assert_eq!(node.name, "TCP Node");
     assert_eq!(node.monitoring_interval, 30);
-    assert_eq!(node.credential_id, Some("cred_123".to_string()));
 }
 
 #[test]
@@ -548,7 +540,6 @@ fn test_node_without_optional_fields() {
         last_check: None,
         response_time: None,
         monitoring_interval: 60,
-        credential_id: None,
         consecutive_failures: 0,
         max_check_attempts: 3,
         retry_interval: 15,
@@ -557,7 +548,6 @@ fn test_node_without_optional_fields() {
     assert!(node.id.is_none());
     assert!(node.last_check.is_none());
     assert!(node.response_time.is_none());
-    assert!(node.credential_id.is_none());
 }
 
 #[test]
@@ -573,7 +563,6 @@ fn test_node_clone() {
         last_check: Some(Utc::now()),
         response_time: Some(100),
         monitoring_interval: 60,
-        credential_id: None,
         consecutive_failures: 0,
         max_check_attempts: 3,
         retry_interval: 15,
@@ -597,7 +586,6 @@ fn test_node_debug() {
         last_check: None,
         response_time: None,
         monitoring_interval: 60,
-        credential_id: None,
         consecutive_failures: 0,
         max_check_attempts: 3,
         retry_interval: 15,
@@ -620,7 +608,6 @@ fn test_node_partial_eq() {
         last_check: None,
         response_time: None,
         monitoring_interval: 60,
-        credential_id: None,
         consecutive_failures: 0,
         max_check_attempts: 3,
         retry_interval: 15,
@@ -637,7 +624,6 @@ fn test_node_partial_eq() {
         last_check: None,
         response_time: None,
         monitoring_interval: 60,
-        credential_id: None,
         consecutive_failures: 0,
         max_check_attempts: 3,
         retry_interval: 15,
@@ -658,7 +644,6 @@ fn test_node_import_with_tcp() {
             timeout: 5,
         },
         monitoring_interval: 30,
-        credential_id: Some("cred_abc".to_string()),
         max_check_attempts: 3,
         retry_interval: 15,
     };
@@ -677,7 +662,6 @@ fn test_node_import_clone() {
             timeout: 5,
         },
         monitoring_interval: 60,
-        credential_id: None,
         max_check_attempts: 3,
         retry_interval: 15,
     };
@@ -695,7 +679,6 @@ fn test_node_import_debug() {
             expected_status: 200,
         },
         monitoring_interval: 120,
-        credential_id: None,
         max_check_attempts: 3,
         retry_interval: 15,
     };

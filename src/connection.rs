@@ -1,13 +1,12 @@
 //! Connection strategies for different monitor types.
 //!
 //! This module implements the Strategy pattern for connecting to monitored nodes.
-//! **Note:** Only SSH-based connections (SSH, Ping, TCP) support credential-based authentication.
-//! HTTP/HTTPS targets will always open in the default web browser without credential handling.
+//! HTTP/HTTPS targets open in the default web browser; Ping and TCP targets open
+//! an SSH session in a terminal using the system's default SSH configuration.
 
-use crate::credentials::SshCredential;
 use anyhow::{anyhow, Result};
 use std::process::{Command, Stdio};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 /// Trait defining the connection strategy interface
 pub trait ConnectionStrategy: Send + Sync {
@@ -19,18 +18,7 @@ pub trait ConnectionStrategy: Send + Sync {
     fn description(&self) -> &str;
 }
 
-/// Enhanced trait for connection strategies that support authentication
-pub trait AuthenticatedConnectionStrategy: ConnectionStrategy {
-    /// Connect to the target using provided credentials
-    fn connect_with_credentials(&self, target: &str, credential: &SshCredential) -> Result<()>;
-}
-
 /// HTTP connection strategy - opens URLs in the default web browser.
-///
-/// **Note:** HTTP/HTTPS connections do not support credentials. This strategy
-/// will always open the URL in the system's default browser without any
-/// credential handling. For authenticated access, credentials should be
-/// managed through the browser's built-in authentication mechanisms.
 pub struct HttpConnectionStrategy;
 
 impl ConnectionStrategy for HttpConnectionStrategy {
@@ -89,115 +77,24 @@ impl SshConnectionStrategy {
         (target.to_string(), 22)
     }
 
-    /// Check if sshpass is available on the system
-    fn check_sshpass_available(&self) -> bool {
-        Command::new("which")
-            .arg("sshpass")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    }
-
-    /// Build SSH command with credentials
-    fn build_ssh_command(
-        &self,
-        host: &str,
-        port: u16,
-        credential: Option<&SshCredential>,
-    ) -> Result<Vec<String>> {
-        let mut command = Vec::new();
-
-        match credential {
-            Some(SshCredential::Default) | None => {
-                // Use default SSH behavior
-                command.push("ssh".to_string());
-                if port != 22 {
-                    command.push("-p".to_string());
-                    command.push(port.to_string());
-                }
-                command.push(host.to_string());
-            }
-            Some(SshCredential::Password { username, password }) => {
-                // For password auth, use sshpass to pass the password securely
-                if !self.check_sshpass_available() {
-                    return Err(anyhow!(
-                        "sshpass is required for password authentication but not found. \
-                        Install it with: brew install sshpass (macOS), \
-                        apt-get install sshpass (Ubuntu/Debian), or \
-                        yum install sshpass (RHEL/CentOS)"
-                    ));
-                }
-
-                command.push("sshpass".to_string());
-                command.push("-p".to_string());
-                command.push(password.as_str().to_string());
-                command.push("ssh".to_string());
-                command.push("-o".to_string());
-                command.push("StrictHostKeyChecking=no".to_string());
-                if port != 22 {
-                    command.push("-p".to_string());
-                    command.push(port.to_string());
-                }
-                command.push(format!("{}@{}", username, host));
-            }
-            Some(SshCredential::Key {
-                username,
-                private_key_path,
-                ..
-            }) => {
-                // Use specific SSH key
-                command.push("ssh".to_string());
-                if port != 22 {
-                    command.push("-p".to_string());
-                    command.push(port.to_string());
-                }
-                command.push("-i".to_string());
-                command.push(private_key_path.to_string_lossy().to_string());
-                command.push(format!("{}@{}", username, host));
-            }
-            Some(SshCredential::KeyData { username, .. }) => {
-                // For embedded key data, we'll write to a temp file
-                // Note: This is a simplified implementation - in production you'd want better temp file security
-                command.push("ssh".to_string());
-                if port != 22 {
-                    command.push("-p".to_string());
-                    command.push(port.to_string());
-                }
-                // We'll need to handle the temp file creation during connection
-                // For now, just connect with username and let SSH use default keys
-                warn!(
-                    "Using default SSH behavior for embedded key data - temp file creation needed"
-                );
-                command.push(format!("{}@{}", username, host));
-            }
+    /// Build the SSH command for the given host and port
+    fn build_ssh_command(&self, host: &str, port: u16) -> Vec<String> {
+        let mut command = vec!["ssh".to_string()];
+        if port != 22 {
+            command.push("-p".to_string());
+            command.push(port.to_string());
         }
-
-        Ok(command)
+        command.push(host.to_string());
+        command
     }
 }
 
 impl ConnectionStrategy for SshConnectionStrategy {
     fn connect(&self, target: &str) -> Result<()> {
-        self.connect_with_credentials(target, &SshCredential::Default)
-    }
-
-    fn description(&self) -> &str {
-        "Open SSH connection in terminal"
-    }
-}
-
-impl AuthenticatedConnectionStrategy for SshConnectionStrategy {
-    fn connect_with_credentials(&self, target: &str, credential: &SshCredential) -> Result<()> {
         let (host, port) = self.parse_target(target);
-        info!(
-            "Opening SSH connection to {}:{} with credentials",
-            host, port
-        );
+        info!("Opening SSH connection to {}:{}", host, port);
 
-        let ssh_command_vec = self.build_ssh_command(&host, port, Some(credential))?;
-        let ssh_command_str = ssh_command_vec.join(" ");
+        let ssh_command_str = self.build_ssh_command(&host, port).join(" ");
 
         #[cfg(target_os = "macos")]
         {
@@ -299,6 +196,10 @@ impl AuthenticatedConnectionStrategy for SshConnectionStrategy {
         }
 
         Ok(())
+    }
+
+    fn description(&self) -> &str {
+        "Open SSH connection in terminal"
     }
 }
 

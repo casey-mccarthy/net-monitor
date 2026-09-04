@@ -21,7 +21,6 @@ Stores monitored nodes configuration.
 | monitoring_interval | INTEGER | NOT NULL DEFAULT 60 | Check interval in seconds |
 | created_at | TEXT | NOT NULL | ISO 8601 timestamp |
 | updated_at | TEXT | NOT NULL | ISO 8601 timestamp |
-| credential_id | INTEGER | REFERENCES credentials(id) | Optional credential reference |
 
 #### `monitoring_results`
 Stores historical monitoring data.
@@ -57,20 +56,6 @@ Stores node status transition events for analytics and historical tracking.
 
 **Note:** This table differs from `monitoring_results` by only recording **status transitions** (when status actually changes), not every monitoring check. This enables efficient queries for outage tracking, uptime calculations, and status history analysis.
 
-#### `credentials`
-Stores encrypted authentication credentials.
-
-| Column | Type | Constraints | Description |
-|--------|------|------------|-------------|
-| id | INTEGER | PRIMARY KEY | Unique identifier |
-| name | TEXT | NOT NULL UNIQUE | Credential identifier |
-| credential_type | TEXT | NOT NULL | 'password' or 'ssh_key' |
-| encrypted_data | BLOB | NOT NULL | Encrypted credential data |
-| salt | BLOB | NOT NULL | Encryption salt |
-| nonce | BLOB | NOT NULL | Encryption nonce |
-| created_at | TEXT | NOT NULL | ISO 8601 timestamp |
-| updated_at | TEXT | NOT NULL | ISO 8601 timestamp |
-
 #### `migrations`
 Tracks applied database migrations.
 
@@ -86,13 +71,11 @@ Tracks applied database migrations.
 - Created `monitoring_results` table
 - Established foreign key relationships
 
-### Version 2 - Add Credentials
-- Added `credentials` table
-- Added encryption fields for secure storage
-
-### Version 3 - Link Nodes to Credentials
-- Added `credential_id` column to `nodes` table
-- Created foreign key reference to credentials
+### Version 2 - Add Credentials (removed)
+- Added `credentials` table and a `credential_id` column on `nodes`
+- The credential store has since been removed. The application no longer
+  reads or writes `credential_id`; the column may still exist in databases
+  created by older versions and is simply ignored.
 
 ## Data Types Mapping
 

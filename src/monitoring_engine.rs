@@ -378,7 +378,6 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 60,
-            credential_id: None,
             consecutive_failures: failures,
             max_check_attempts: max_attempts,
             retry_interval: 15,

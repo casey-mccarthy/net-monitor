@@ -1,6 +1,5 @@
 mod config;
 mod connection;
-mod credentials;
 mod database;
 mod models;
 mod monitor;
