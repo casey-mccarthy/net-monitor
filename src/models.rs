@@ -1,5 +1,4 @@
 use crate::connection::ConnectionType;
-use crate::credentials::CredentialId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -98,8 +97,6 @@ pub struct Node {
     pub response_time: Option<u64>,
     /// Monitoring interval in seconds
     pub monitoring_interval: u64,
-    /// Optional credential reference for connections
-    pub credential_id: Option<CredentialId>,
     /// Number of consecutive failures (resets on success)
     #[serde(default)]
     pub consecutive_failures: u32,
@@ -145,8 +142,6 @@ pub struct NodeImport {
     pub detail: MonitorDetail,
     /// Monitoring interval in seconds
     pub monitoring_interval: u64,
-    /// Optional credential reference for connections
-    pub credential_id: Option<CredentialId>,
     /// How many consecutive failures before confirming offline
     #[serde(default = "default_max_check_attempts")]
     pub max_check_attempts: u32,

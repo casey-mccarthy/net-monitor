@@ -67,12 +67,6 @@ Net-Monitor follows a modular architecture with clear separation of concerns:
 - SSH connection implementation
 - Extensible for future connection types
 
-### Credential Management (`credentials.rs`)
-- Secure storage of authentication data
-- Encryption/decryption using ring
-- Key management
-- Credential association with nodes
-
 ## Data Flow
 
 1. **User Interaction** → TUI receives input
@@ -92,15 +86,10 @@ Net-Monitor follows a modular architecture with clear separation of concerns:
 
 ## Security Considerations
 
-### Credential Storage
-- Credentials encrypted at rest using AES-256-GCM
-- Keys derived using PBKDF2
-- No plaintext storage of sensitive data
-
 ### Network Security
 - TLS/SSL for HTTPS connections
-- SSH key validation
-- No credential logging
+- SSH connections use the system's own SSH configuration and keys; the
+  application stores no authentication secrets
 
 ### Data Protection
 - Local-only data storage

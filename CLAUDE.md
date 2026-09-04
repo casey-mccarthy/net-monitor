@@ -134,7 +134,7 @@ cargo llvm-cov clean
 **Coverage Tips:**
 - Coverage reports are excluded from git via `.gitignore`
 - The CI workflow automatically generates coverage reports on every push
-- Focus on covering critical paths: credential management, node operations, connection logic
+- Focus on covering critical paths: node operations, connection logic, monitoring engine
 - Some GUI/TUI code may be difficult to cover with unit tests - that's okay
 
 ## Development Workflow
@@ -454,7 +454,7 @@ gh pr create --title "feat: implement awesome feature" --body "Closes #123
 
 - **🚨 NEVER push directly to main** - All changes must go through a pull request, no exceptions
 - PRs trigger automatic semantic versioning and releases when merged to main
-- This project intentionally includes unused code for future features (SSH connections, credential management)
+- This project intentionally includes unused code for future features (e.g. connection types, status change analysis)
 - Dead code warnings are suppressed to maintain clean build output
 - The `-A dead_code` flag allows unused functions/structs without warnings
 - All other warnings are still treated as errors with `-D warnings`

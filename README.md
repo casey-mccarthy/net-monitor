@@ -10,7 +10,6 @@ A terminal-based network monitoring tool built with Rust. Monitors HTTP endpoint
 - **Soft/hard state model** — reduces false positives by requiring consecutive failures before marking a node offline
 - **Persistent storage** — SQLite database with automatic schema migrations
 - **Import/Export** — JSON-based node configuration for portability
-- **Credential management** — AES-256-GCM encrypted storage for SSH credentials
 - **Cross-platform** — runs on Linux, macOS, and Windows
 
 ## Installation
@@ -55,7 +54,6 @@ net-monitor
 | `d` | Delete selected node |
 | `m` | Start/stop monitoring |
 | `h` | View status history |
-| `c` | Manage credentials |
 | `r` | Reorder nodes |
 | `i` | Import nodes from JSON |
 | `x` | Export nodes to JSON |

@@ -9,7 +9,6 @@ All unit tests have been moved to the `tests/` directory following Rust best pra
 - `tests/models_tests.rs` - Tests for data structures and serialization (11 tests)
 - `tests/monitoring_tests.rs` - Tests for monitoring functionality (16 tests)
 - `tests/database_tests.rs` - Tests for database operations (21 tests)
-- `tests/credentials_tests.rs` - Tests for credentials module (2 tests)
 
 ### Integration Tests
 Integration tests are also located in the `tests/` directory:
@@ -54,9 +53,6 @@ cargo test --test monitoring_tests
 
 # Run unit tests for database
 cargo test --test database_tests
-
-# Run unit tests for credentials
-cargo test --test credentials_tests
 ```
 
 #### Integration Tests
@@ -159,12 +155,6 @@ cargo test
 - Error handling for invalid data
 - Node status parsing
 - Response time and last check handling
-
-### Credentials Module Tests (tests/credentials_tests.rs)
-- SensitiveString creation and usage
-- SSH credential types (Default, Password, Key)
-- Username extraction from credentials
-- Secret requirement checking
 
 ### Integration Tests
 - Complete monitoring workflows

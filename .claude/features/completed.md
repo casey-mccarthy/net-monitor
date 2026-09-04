@@ -6,17 +6,11 @@ This document tracks features that have been successfully implemented and releas
 
 ### SSH Connection Support
 - **Released**: 2024-08-30
-- **Description**: Added SSH connection monitoring with key-based authentication
-- Secure credential storage system
-- Support for password and key authentication
+- **Description**: Added SSH connection support using the system's default SSH configuration
 - Integration with existing monitoring framework
-
-### Credential Management System
-- **Released**: 2024-08-30
-- **Description**: Secure storage for authentication credentials
-- Encrypted storage using ring cryptography
-- Support for SSH keys and passwords
-- Per-node credential association
+- The encrypted credential store that originally shipped alongside this
+  feature has since been removed; SSH sessions rely on the user's own SSH
+  agent, keys, and config.
 
 ## Version 0.2.0
 

@@ -1,5 +1,4 @@
 use crate::connection::ConnectionStrategy;
-use crate::credentials::{CredentialStore, CredentialSummary, FileCredentialStore};
 use crate::database::Database;
 use crate::models::{MonitorDetail, Node, NodeImport, NodeStatus, StatusChange};
 use crate::monitoring_engine::{self, MonitoringHandle, NodeConfigUpdate};
@@ -17,10 +16,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState,
-        Wrap,
-    },
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap},
     Frame, Terminal,
 };
 use std::collections::HashMap;
@@ -53,7 +49,6 @@ struct NodeForm {
     name: String,
     monitor_type: MonitorTypeForm,
     monitoring_interval: String,
-    credential_id: Option<String>,
     // HTTP
     http_url: String,
     http_expected_status: String,
@@ -67,7 +62,6 @@ struct NodeForm {
     tcp_timeout: String,
     // Form state
     current_field: usize,
-    credential_index: Option<usize>, // Index in filtered credential list, None = "None" selection
 }
 
 impl Default for NodeForm {
@@ -76,7 +70,6 @@ impl Default for NodeForm {
             name: String::new(),
             monitor_type: MonitorTypeForm::Http,
             monitoring_interval: "5".to_string(),
-            credential_id: None,
             http_url: "https://".to_string(),
             http_expected_status: "200".to_string(),
             ping_host: String::new(),
@@ -86,7 +79,6 @@ impl Default for NodeForm {
             tcp_port: String::new(),
             tcp_timeout: "5".to_string(),
             current_field: 0,
-            credential_index: None,
         }
     }
 }
@@ -115,7 +107,6 @@ impl NodeForm {
         let mut form = Self {
             name: node.name.clone(),
             monitoring_interval: node.monitoring_interval.to_string(),
-            credential_id: node.credential_id.clone(),
             ..Default::default()
         };
 
@@ -153,139 +144,11 @@ impl NodeForm {
     }
 
     fn get_field_count(&self) -> usize {
-        // name, monitoring_interval, monitor_type, credential_id + type-specific fields
+        // name, monitoring_interval, monitor_type + type-specific fields
         match self.monitor_type {
-            MonitorTypeForm::Http => 6, // name, interval, type, cred, url, status
-            MonitorTypeForm::Ping => 7, // name, interval, type, cred, host, count, timeout
-            MonitorTypeForm::Tcp => 7,  // name, interval, type, cred, host, port, timeout
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-#[allow(dead_code)] // Future feature: credential form variants
-enum CredentialTypeForm {
-    Default,
-    Password,
-    KeyFile,
-    KeyData,
-}
-
-impl std::fmt::Display for CredentialTypeForm {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CredentialTypeForm::Default => write!(f, "System Default"),
-            CredentialTypeForm::Password => write!(f, "Username/Password"),
-            CredentialTypeForm::KeyFile => write!(f, "SSH Key File"),
-            CredentialTypeForm::KeyData => write!(f, "SSH Key Data"),
-        }
-    }
-}
-
-#[derive(Clone)]
-#[allow(dead_code)] // Future feature: credential form fields
-struct CredentialForm {
-    name: String,
-    description: String,
-    credential_type: CredentialTypeForm,
-    username: String,
-    password: String,
-    ssh_key_path: String,
-    ssh_key_data: String,
-    passphrase: String,
-    current_field: usize,
-}
-
-impl Default for CredentialForm {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            description: String::new(),
-            credential_type: CredentialTypeForm::Default,
-            username: String::new(),
-            password: String::new(),
-            ssh_key_path: String::new(),
-            ssh_key_data: String::new(),
-            passphrase: String::new(),
-            current_field: 0,
-        }
-    }
-}
-
-impl CredentialForm {
-    fn get_field_count(&self) -> usize {
-        // name, description, credential_type + type-specific fields
-        match self.credential_type {
-            CredentialTypeForm::Default => 3,  // name, description, type
-            CredentialTypeForm::Password => 5, // name, description, type, username, password
-            CredentialTypeForm::KeyFile => 6, // name, description, type, username, key_path, passphrase
-            CredentialTypeForm::KeyData => 6, // name, description, type, username, key_data, passphrase
-        }
-    }
-
-    fn from_stored_credential(stored: &crate::credentials::StoredCredential) -> Self {
-        use crate::credentials::SshCredential;
-
-        let (credential_type, username, password, ssh_key_path, ssh_key_data, passphrase) =
-            match &stored.credential {
-                SshCredential::Default => (
-                    CredentialTypeForm::Default,
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                ),
-                SshCredential::Password { username, password } => (
-                    CredentialTypeForm::Password,
-                    username.clone(),
-                    password.as_str().to_string(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                ),
-                SshCredential::Key {
-                    username,
-                    private_key_path,
-                    passphrase,
-                } => (
-                    CredentialTypeForm::KeyFile,
-                    username.clone(),
-                    String::new(),
-                    private_key_path.to_string_lossy().to_string(),
-                    String::new(),
-                    passphrase
-                        .as_ref()
-                        .map(|p| p.as_str().to_string())
-                        .unwrap_or_default(),
-                ),
-                SshCredential::KeyData {
-                    username,
-                    private_key_data,
-                    passphrase,
-                } => (
-                    CredentialTypeForm::KeyData,
-                    username.clone(),
-                    String::new(),
-                    String::new(),
-                    private_key_data.as_str().to_string(),
-                    passphrase
-                        .as_ref()
-                        .map(|p| p.as_str().to_string())
-                        .unwrap_or_default(),
-                ),
-            };
-
-        Self {
-            name: stored.name.clone(),
-            description: stored.description.clone().unwrap_or_default(),
-            credential_type,
-            username,
-            password,
-            ssh_key_path,
-            ssh_key_data,
-            passphrase,
-            current_field: 0,
+            MonitorTypeForm::Http => 5, // name, interval, type, url, status
+            MonitorTypeForm::Ping => 6, // name, interval, type, host, count, timeout
+            MonitorTypeForm::Tcp => 6,  // name, interval, type, host, port, timeout
         }
     }
 }
@@ -296,9 +159,6 @@ enum AppState {
     AddNode,
     EditNode,
     ViewHistory,
-    ManageCredentials,
-    AddCredential,
-    EditCredential,
     Help,
     ConfirmDelete,
     ImportModeSelect,
@@ -353,7 +213,6 @@ pub struct NetworkMonitorTui {
     database: Database,
     nodes: Vec<Node>,
     table_state: TableState,
-    list_state: ListState,
     state: AppState,
     status_message: Option<(String, Instant)>,
     monitoring_handle: Option<MonitoringHandle>,
@@ -363,19 +222,12 @@ pub struct NetworkMonitorTui {
     // Node form
     node_form: NodeForm,
     editing_node_id: Option<i64>,
-    // Credentials
-    credential_store: Box<dyn CredentialStore>,
-    credentials: Vec<CredentialSummary>,
-    credential_form: CredentialForm,
-    editing_credential_id: Option<String>,
     // Status history
     viewing_history_node_id: Option<i64>,
     status_changes: Vec<StatusChange>,
     history_table_state: TableState,
     // Delete confirmation
     delete_node_index: Option<usize>,
-    delete_credential_index: Option<usize>,
-    return_to_credentials_after_delete: bool,
     // Import/Export
     import_file_path: Option<PathBuf>,
     import_mode_selected: usize,
@@ -398,25 +250,10 @@ impl NetworkMonitorTui {
         let nodes = database.get_all_nodes()?;
         let (update_tx, update_rx) = mpsc::channel();
 
-        let credential_store: Box<dyn CredentialStore> =
-            match FileCredentialStore::new("default_password".to_string()) {
-                Ok(store) => {
-                    info!("Successfully created file credential store");
-                    Box::new(store)
-                }
-                Err(e) => {
-                    error!("Failed to initialize credential store: {}", e);
-                    return Err(e);
-                }
-            };
-
-        let credentials = credential_store.list_credentials().unwrap_or_default();
-
         let mut app = Self {
             database,
             nodes,
             table_state: TableState::default(),
-            list_state: ListState::default(),
             state: AppState::Main,
             status_message: None,
             monitoring_handle: None,
@@ -425,16 +262,10 @@ impl NetworkMonitorTui {
             updated_nodes: HashMap::new(),
             node_form: NodeForm::default(),
             editing_node_id: None,
-            credential_store,
-            credentials,
-            credential_form: CredentialForm::default(),
-            editing_credential_id: None,
             viewing_history_node_id: None,
             status_changes: Vec::new(),
             history_table_state: TableState::default(),
             delete_node_index: None,
-            delete_credential_index: None,
-            return_to_credentials_after_delete: false,
             import_file_path: None,
             import_mode_selected: 0,
             deferred_action: None,
@@ -584,16 +415,6 @@ impl NetworkMonitorTui {
                                     self.editing_node_id = None;
                                 }
                             }
-                            AppState::ManageCredentials => {
-                                if self.handle_credentials_input(key.code) {
-                                    self.state = AppState::Main;
-                                }
-                            }
-                            AppState::AddCredential | AppState::EditCredential => {
-                                if self.handle_credential_form_input(key.code) {
-                                    self.state = AppState::ManageCredentials;
-                                }
-                            }
                             AppState::ViewHistory => match key.code {
                                 KeyCode::Esc | KeyCode::Char('q') => {
                                     self.state = AppState::Main;
@@ -631,13 +452,7 @@ impl NetworkMonitorTui {
                             }
                             AppState::ConfirmDelete => {
                                 if self.handle_confirm_delete_input(key.code) {
-                                    // Return to credential manager if we came from there
-                                    if self.return_to_credentials_after_delete {
-                                        self.state = AppState::ManageCredentials;
-                                        self.return_to_credentials_after_delete = false;
-                                    } else {
-                                        self.state = AppState::Main;
-                                    }
+                                    self.state = AppState::Main;
                                 }
                             }
                             AppState::ImportModeSelect => {
@@ -718,8 +533,6 @@ impl NetworkMonitorTui {
         match self.state {
             AppState::Main | AppState::Reorder => self.render_main_view(f),
             AppState::AddNode | AppState::EditNode => self.render_node_form(f),
-            AppState::ManageCredentials => self.render_credentials_view(f),
-            AppState::AddCredential | AppState::EditCredential => self.render_credential_form(f),
             AppState::ViewHistory => self.render_history_view(f),
             AppState::Help => self.render_help_view(f),
             AppState::ConfirmDelete => self.render_confirm_delete(f),
@@ -1113,67 +926,6 @@ impl NetworkMonitorTui {
                     Span::raw("")
                 },
             ]),
-            {
-                // Build credential line with name and appropriate hints
-                let compatible_creds = self.get_compatible_credentials();
-                let credential_text = match form.credential_index {
-                    None => "None".to_string(),
-                    Some(idx) => {
-                        if idx < compatible_creds.len() {
-                            compatible_creds[idx].name.clone()
-                        } else {
-                            "None".to_string()
-                        }
-                    }
-                };
-
-                let hint = match form.monitor_type {
-                    MonitorTypeForm::Http => {
-                        if form.current_field == 3 {
-                            Span::styled("[Not applicable]", Style::default().fg(Color::Gray))
-                        } else {
-                            Span::raw("")
-                        }
-                    }
-                    MonitorTypeForm::Ping | MonitorTypeForm::Tcp => {
-                        if form.current_field == 3 {
-                            if compatible_creds.is_empty() {
-                                Span::styled(
-                                    "[No credentials - press 'c' to manage]",
-                                    Style::default().fg(Color::Yellow),
-                                )
-                            } else {
-                                Span::styled(
-                                    "[←/→ or Space, 'x' to clear]",
-                                    Style::default().fg(Color::Gray),
-                                )
-                            }
-                        } else {
-                            Span::raw("")
-                        }
-                    }
-                };
-
-                Line::from(vec![
-                    Span::raw("Credential: "),
-                    Span::styled(
-                        credential_text,
-                        if form.current_field == 3 {
-                            match form.monitor_type {
-                                MonitorTypeForm::Http => {
-                                    // Gray out for HTTP as it's not applicable
-                                    Style::default().bg(Color::DarkGray).fg(Color::DarkGray)
-                                }
-                                _ => Style::default().bg(Color::DarkGray),
-                            }
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                    Span::raw(" "),
-                    hint,
-                ])
-            },
         ];
 
         match form.monitor_type {
@@ -1181,12 +933,12 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("URL: "),
                     Span::styled(
-                        if form.http_url.is_empty() && form.current_field == 4 {
+                        if form.http_url.is_empty() && form.current_field == 3 {
                             cursor
                         } else {
                             &form.http_url
                         },
-                        if form.current_field == 4 {
+                        if form.current_field == 3 {
                             Style::default().bg(Color::DarkGray)
                         } else {
                             Style::default()
@@ -1196,12 +948,12 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Expected Status: "),
                     Span::styled(
-                        if form.http_expected_status.is_empty() && form.current_field == 5 {
+                        if form.http_expected_status.is_empty() && form.current_field == 3 {
                             cursor
                         } else {
                             &form.http_expected_status
                         },
-                        if form.current_field == 5 {
+                        if form.current_field == 3 {
                             Style::default().bg(Color::DarkGray)
                         } else {
                             Style::default()
@@ -1213,12 +965,12 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Host: "),
                     Span::styled(
-                        if form.ping_host.is_empty() && form.current_field == 4 {
+                        if form.ping_host.is_empty() && form.current_field == 3 {
                             cursor
                         } else {
                             &form.ping_host
                         },
-                        if form.current_field == 4 {
+                        if form.current_field == 3 {
                             Style::default().bg(Color::DarkGray)
                         } else {
                             Style::default()
@@ -1228,12 +980,12 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Count: "),
                     Span::styled(
-                        if form.ping_count.is_empty() && form.current_field == 5 {
+                        if form.ping_count.is_empty() && form.current_field == 3 {
                             cursor
                         } else {
                             &form.ping_count
                         },
-                        if form.current_field == 5 {
+                        if form.current_field == 3 {
                             Style::default().bg(Color::DarkGray)
                         } else {
                             Style::default()
@@ -1243,12 +995,12 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Timeout (s): "),
                     Span::styled(
-                        if form.ping_timeout.is_empty() && form.current_field == 6 {
+                        if form.ping_timeout.is_empty() && form.current_field == 3 {
                             cursor
                         } else {
                             &form.ping_timeout
                         },
-                        if form.current_field == 6 {
+                        if form.current_field == 3 {
                             Style::default().bg(Color::DarkGray)
                         } else {
                             Style::default()
@@ -1260,12 +1012,12 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Host: "),
                     Span::styled(
-                        if form.tcp_host.is_empty() && form.current_field == 4 {
+                        if form.tcp_host.is_empty() && form.current_field == 3 {
                             cursor
                         } else {
                             &form.tcp_host
                         },
-                        if form.current_field == 4 {
+                        if form.current_field == 3 {
                             Style::default().bg(Color::DarkGray)
                         } else {
                             Style::default()
@@ -1275,12 +1027,12 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Port: "),
                     Span::styled(
-                        if form.tcp_port.is_empty() && form.current_field == 5 {
+                        if form.tcp_port.is_empty() && form.current_field == 3 {
                             cursor
                         } else {
                             &form.tcp_port
                         },
-                        if form.current_field == 5 {
+                        if form.current_field == 3 {
                             Style::default().bg(Color::DarkGray)
                         } else {
                             Style::default()
@@ -1290,12 +1042,12 @@ impl NetworkMonitorTui {
                 lines.push(Line::from(vec![
                     Span::raw("Timeout (s): "),
                     Span::styled(
-                        if form.tcp_timeout.is_empty() && form.current_field == 6 {
+                        if form.tcp_timeout.is_empty() && form.current_field == 3 {
                             cursor
                         } else {
                             &form.tcp_timeout
                         },
-                        if form.current_field == 6 {
+                        if form.current_field == 3 {
                             Style::default().bg(Color::DarkGray)
                         } else {
                             Style::default()
@@ -1321,314 +1073,6 @@ impl NetworkMonitorTui {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw(" Change | "),
-            Span::styled(
-                "[Enter]",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" Save | "),
-            Span::styled(
-                "[Esc]",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" Cancel"),
-        ]));
-
-        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
-        f.render_widget(paragraph, inner);
-    }
-
-    fn render_credentials_view(&mut self, f: &mut Frame) {
-        let area = centered_rect(70, 70, f.area());
-        f.render_widget(Clear, area);
-
-        let block = Block::default()
-            .title("Credential Manager")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
-
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Min(0),
-                Constraint::Length(2),
-            ])
-            .split(inner);
-
-        let menu = Paragraph::new(Line::from(vec![
-            Span::raw("["),
-            Span::styled("A", Style::default().fg(Color::Yellow)),
-            Span::raw("]dd | ["),
-            Span::styled("E", Style::default().fg(Color::Yellow)),
-            Span::raw("]dit | ["),
-            Span::styled("D", Style::default().fg(Color::Yellow)),
-            Span::raw("]elete | ["),
-            Span::styled("Esc", Style::default().fg(Color::Yellow)),
-            Span::raw("] Back"),
-        ]));
-        f.render_widget(menu, chunks[0]);
-
-        let items: Vec<ListItem> = self
-            .credentials
-            .iter()
-            .map(|cred| {
-                ListItem::new(Line::from(vec![
-                    Span::raw(&cred.name),
-                    Span::raw(" - "),
-                    Span::styled(&cred.credential_type, Style::default().fg(Color::DarkGray)),
-                    Span::raw(" - "),
-                    Span::raw(cred.description.as_deref().unwrap_or("")),
-                ]))
-            })
-            .collect();
-
-        let list = List::new(items)
-            .highlight_style(
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol(">> ");
-
-        f.render_stateful_widget(list, chunks[1], &mut self.list_state);
-    }
-
-    fn render_credential_form(&mut self, f: &mut Frame) {
-        let area = centered_rect(70, 80, f.area());
-        f.render_widget(Clear, area);
-
-        let title = if self.editing_credential_id.is_some() {
-            "Edit Credential"
-        } else {
-            "Add Credential"
-        };
-
-        let block = Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
-
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-
-        let form = &self.credential_form;
-        let cursor = if self.cursor_blink_state { "│" } else { "" };
-        let mut lines = vec![
-            Line::from(vec![
-                Span::raw("Name: "),
-                Span::styled(
-                    if form.name.is_empty() && form.current_field == 0 {
-                        cursor
-                    } else {
-                        &form.name
-                    },
-                    if form.current_field == 0 {
-                        Style::default().bg(Color::DarkGray)
-                    } else {
-                        Style::default()
-                    },
-                ),
-            ]),
-            Line::from(vec![
-                Span::raw("Description: "),
-                Span::styled(
-                    if form.description.is_empty() && form.current_field == 1 {
-                        cursor
-                    } else {
-                        &form.description
-                    },
-                    if form.current_field == 1 {
-                        Style::default().bg(Color::DarkGray)
-                    } else {
-                        Style::default()
-                    },
-                ),
-            ]),
-            Line::from(vec![
-                Span::raw("Credential Type: "),
-                Span::styled(
-                    format!("{} ", form.credential_type),
-                    if form.current_field == 2 {
-                        Style::default().bg(Color::DarkGray)
-                    } else {
-                        Style::default()
-                    },
-                ),
-                if form.current_field == 2 {
-                    Span::styled("[←/→ or Space to change]", Style::default().fg(Color::Gray))
-                } else {
-                    Span::raw("")
-                },
-            ]),
-        ];
-
-        match form.credential_type {
-            CredentialTypeForm::Default => {
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    "Uses system default SSH configuration",
-                    Style::default().fg(Color::Gray),
-                )));
-            }
-            CredentialTypeForm::Password => {
-                lines.push(Line::from(vec![
-                    Span::raw("Username: "),
-                    Span::styled(
-                        if form.username.is_empty() && form.current_field == 3 {
-                            cursor
-                        } else {
-                            &form.username
-                        },
-                        if form.current_field == 3 {
-                            Style::default().bg(Color::DarkGray)
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                ]));
-                let password_display = if form.password.is_empty() {
-                    cursor.to_string()
-                } else {
-                    "*".repeat(form.password.len())
-                };
-                lines.push(Line::from(vec![
-                    Span::raw("Password: "),
-                    Span::styled(
-                        password_display,
-                        if form.current_field == 4 {
-                            Style::default().bg(Color::DarkGray)
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                ]));
-            }
-            CredentialTypeForm::KeyFile => {
-                lines.push(Line::from(vec![
-                    Span::raw("Username: "),
-                    Span::styled(
-                        if form.username.is_empty() && form.current_field == 3 {
-                            cursor
-                        } else {
-                            &form.username
-                        },
-                        if form.current_field == 3 {
-                            Style::default().bg(Color::DarkGray)
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                ]));
-                lines.push(Line::from(vec![
-                    Span::raw("SSH Key Path: "),
-                    Span::styled(
-                        if form.ssh_key_path.is_empty() && form.current_field == 4 {
-                            cursor
-                        } else {
-                            &form.ssh_key_path
-                        },
-                        if form.current_field == 4 {
-                            Style::default().bg(Color::DarkGray)
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                ]));
-                let passphrase_display = if form.passphrase.is_empty() {
-                    cursor.to_string()
-                } else {
-                    "*".repeat(form.passphrase.len())
-                };
-                lines.push(Line::from(vec![
-                    Span::raw("Passphrase (optional): "),
-                    Span::styled(
-                        passphrase_display,
-                        if form.current_field == 5 {
-                            Style::default().bg(Color::DarkGray)
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                ]));
-            }
-            CredentialTypeForm::KeyData => {
-                lines.push(Line::from(vec![
-                    Span::raw("Username: "),
-                    Span::styled(
-                        if form.username.is_empty() && form.current_field == 3 {
-                            cursor
-                        } else {
-                            &form.username
-                        },
-                        if form.current_field == 3 {
-                            Style::default().bg(Color::DarkGray)
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                ]));
-                let key_data_display = if form.ssh_key_data.is_empty() {
-                    if form.current_field == 4 {
-                        cursor.to_string()
-                    } else {
-                        "<paste private key>".to_string()
-                    }
-                } else {
-                    "<key data entered>".to_string()
-                };
-                lines.push(Line::from(vec![
-                    Span::raw("SSH Key Data: "),
-                    Span::styled(
-                        key_data_display,
-                        if form.current_field == 4 {
-                            Style::default().bg(Color::DarkGray)
-                        } else {
-                            Style::default().fg(Color::Gray)
-                        },
-                    ),
-                ]));
-                let passphrase_display = if form.passphrase.is_empty() {
-                    cursor.to_string()
-                } else {
-                    "*".repeat(form.passphrase.len())
-                };
-                lines.push(Line::from(vec![
-                    Span::raw("Passphrase (optional): "),
-                    Span::styled(
-                        passphrase_display,
-                        if form.current_field == 5 {
-                            Style::default().bg(Color::DarkGray)
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                ]));
-            }
-        }
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled(
-                "[Tab]",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" Next | "),
-            Span::styled(
-                "[←/→/Space]",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" Change Type | "),
             Span::styled(
                 "[Enter]",
                 Style::default()
@@ -1963,10 +1407,6 @@ impl NetworkMonitorTui {
                         Span::raw(" - View status history"),
                     ]),
                     Line::from(vec![
-                        Span::styled("c", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Manage credentials"),
-                    ]),
-                    Line::from(vec![
                         Span::styled("i", Style::default().fg(Color::Yellow)),
                         Span::raw(" - Import nodes from JSON"),
                     ]),
@@ -2009,65 +1449,11 @@ impl NetworkMonitorTui {
                     ]),
                     Line::from(vec![
                         Span::styled("←/→/Space", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Change monitor type/credential"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("x", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Clear credential selection"),
+                        Span::raw(" - Change monitor type"),
                     ]),
                     Line::from(vec![
                         Span::styled("Enter", Style::default().fg(Color::Yellow)),
                         Span::raw(" - Save node"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("Esc", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Cancel"),
-                    ]),
-                ],
-            ),
-            Some(AppState::ManageCredentials) => (
-                "Help - Credentials Manager",
-                vec![
-                    Line::from(vec![
-                        Span::styled("a", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Add new credential"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("e", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Edit selected credential"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("d", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Delete selected credential"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Navigate credentials"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("Esc/q", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Return to main view"),
-                    ]),
-                ],
-            ),
-            Some(AppState::AddCredential) | Some(AppState::EditCredential) => (
-                "Help - Credential Form",
-                vec![
-                    Line::from(vec![
-                        Span::styled("Tab", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Move to next field"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("Shift+Tab", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Move to previous field"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("←/→/Space", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Change credential type"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("Enter", Style::default().fg(Color::Yellow)),
-                        Span::raw(" - Save credential"),
                     ]),
                     Line::from(vec![
                         Span::styled("Esc", Style::default().fg(Color::Yellow)),
@@ -2200,13 +1586,6 @@ impl NetworkMonitorTui {
                 .map(|n| n.name.as_str())
                 .unwrap_or("Unknown");
             ("node", name)
-        } else if let Some(index) = self.delete_credential_index {
-            let name = self
-                .credentials
-                .get(index)
-                .map(|c| c.name.as_str())
-                .unwrap_or("Unknown");
-            ("credential", name)
         } else {
             ("item", "Unknown")
         };
@@ -2352,15 +1731,13 @@ impl NetworkMonitorTui {
                 self.toggle_monitoring();
             }
             KeyCode::Char('a') | KeyCode::Char('A') => {
-                self.reload_credentials();
                 self.node_form = NodeForm::default();
                 self.state = AppState::AddNode;
             }
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 if let Some(selected) = self.table_state.selected() {
                     if let Some(node) = self.nodes.get(selected).cloned() {
-                        self.reload_credentials();
-                        self.node_form = self.node_form_from_node(&node);
+                        self.node_form = NodeForm::from_node(&node);
                         self.editing_node_id = node.id;
                         self.state = AppState::EditNode;
                     }
@@ -2382,13 +1759,6 @@ impl NetworkMonitorTui {
                         }
                     }
                 }
-            }
-            KeyCode::Char('c') | KeyCode::Char('C') => {
-                self.reload_credentials();
-                if !self.credentials.is_empty() {
-                    self.list_state.select(Some(0));
-                }
-                self.state = AppState::ManageCredentials;
             }
             KeyCode::Char('i') | KeyCode::Char('I') => {
                 self.deferred_action = Some(DeferredAction::ShowImportDialog);
@@ -2527,10 +1897,6 @@ impl NetworkMonitorTui {
                 if self.node_form.current_field == 2 {
                     self.cycle_monitor_type(key == KeyCode::Right);
                 }
-                // Handle arrow keys for Credential field
-                else if self.node_form.current_field == 3 {
-                    self.cycle_credential(key == KeyCode::Right);
-                }
             }
             KeyCode::Char('?') => {
                 self.previous_state = Some(self.state);
@@ -2548,121 +1914,16 @@ impl NetworkMonitorTui {
         false
     }
 
-    fn handle_credentials_input(&mut self, key: KeyCode) -> bool {
-        match key {
-            KeyCode::Esc | KeyCode::Char('q') => return true,
-            KeyCode::Char('a') | KeyCode::Char('A') => {
-                self.credential_form = CredentialForm::default();
-                self.editing_credential_id = None;
-                self.state = AppState::AddCredential;
-            }
-            KeyCode::Char('e') | KeyCode::Char('E') => {
-                if let Some(selected) = self.list_state.selected() {
-                    if let Some(credential_summary) = self.credentials.get(selected) {
-                        // Retrieve the full credential from the store
-                        match self.credential_store.get_credential(&credential_summary.id) {
-                            Ok(Some(stored_credential)) => {
-                                self.credential_form =
-                                    CredentialForm::from_stored_credential(&stored_credential);
-                                self.editing_credential_id = Some(credential_summary.id.clone());
-                                self.state = AppState::EditCredential;
-                            }
-                            Ok(None) => {
-                                self.set_status_message("Credential not found");
-                            }
-                            Err(e) => {
-                                self.set_status_message(format!(
-                                    "Failed to load credential: {}",
-                                    e
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-            KeyCode::Char('d') | KeyCode::Char('D') => {
-                if let Some(selected) = self.list_state.selected() {
-                    self.delete_credential_index = Some(selected);
-                    self.return_to_credentials_after_delete = true;
-                    self.state = AppState::ConfirmDelete;
-                }
-            }
-            KeyCode::Char('?') => {
-                self.previous_state = Some(AppState::ManageCredentials);
-                self.state = AppState::Help;
-                return false;
-            }
-            KeyCode::Down => {
-                if let Some(i) = next_selection(self.list_state.selected(), self.credentials.len())
-                {
-                    self.list_state.select(Some(i));
-                }
-            }
-            KeyCode::Up => {
-                if let Some(i) =
-                    previous_selection(self.list_state.selected(), self.credentials.len())
-                {
-                    self.list_state.select(Some(i));
-                }
-            }
-            _ => {}
-        }
-        false
-    }
-
-    fn handle_credential_form_input(&mut self, key: KeyCode) -> bool {
-        match key {
-            KeyCode::Esc => return true,
-            KeyCode::Enter => {
-                // Keep the form open (with the user's input) if saving failed
-                return self.save_credential_from_form();
-            }
-            KeyCode::Tab => {
-                self.credential_form.current_field = (self.credential_form.current_field + 1)
-                    % self.credential_form.get_field_count();
-            }
-            KeyCode::BackTab => {
-                if self.credential_form.current_field == 0 {
-                    self.credential_form.current_field = self.credential_form.get_field_count() - 1;
-                } else {
-                    self.credential_form.current_field -= 1;
-                }
-            }
-            KeyCode::Left | KeyCode::Right => {
-                // Handle arrow keys for Credential Type field
-                if self.credential_form.current_field == 2 {
-                    self.cycle_credential_type(key == KeyCode::Right);
-                }
-            }
-            KeyCode::Char('?') => {
-                self.previous_state = Some(AppState::AddCredential);
-                self.state = AppState::Help;
-                return false;
-            }
-            KeyCode::Char(c) => {
-                self.add_char_to_credential_field(c);
-            }
-            KeyCode::Backspace => {
-                self.remove_char_from_credential_field();
-            }
-            _ => {}
-        }
-        false
-    }
-
     fn handle_confirm_delete_input(&mut self, key: KeyCode) -> bool {
         match key {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 if let Some(index) = self.delete_node_index.take() {
                     self.delete_node_at_index(index);
-                } else if let Some(index) = self.delete_credential_index.take() {
-                    self.delete_credential_at_index(index);
                 }
                 return true;
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 self.delete_node_index = None;
-                self.delete_credential_index = None;
                 return true;
             }
             _ => {}
@@ -2705,205 +1966,6 @@ impl NetworkMonitorTui {
 
     // Helper methods
 
-    fn cycle_credential_type(&mut self, forward: bool) {
-        self.credential_form.credential_type = if forward {
-            match self.credential_form.credential_type {
-                CredentialTypeForm::Default => CredentialTypeForm::Password,
-                CredentialTypeForm::Password => CredentialTypeForm::KeyFile,
-                CredentialTypeForm::KeyFile => CredentialTypeForm::KeyData,
-                CredentialTypeForm::KeyData => CredentialTypeForm::Default,
-            }
-        } else {
-            match self.credential_form.credential_type {
-                CredentialTypeForm::Default => CredentialTypeForm::KeyData,
-                CredentialTypeForm::KeyData => CredentialTypeForm::KeyFile,
-                CredentialTypeForm::KeyFile => CredentialTypeForm::Password,
-                CredentialTypeForm::Password => CredentialTypeForm::Default,
-            }
-        };
-    }
-
-    fn add_char_to_credential_field(&mut self, c: char) {
-        let field = self.credential_form.current_field;
-        match field {
-            0 => self.credential_form.name.push(c),
-            1 => self.credential_form.description.push(c),
-            2 => {
-                // Cycle through credential types with Space only
-                if c == ' ' {
-                    self.cycle_credential_type(true);
-                }
-            }
-            3 => match self.credential_form.credential_type {
-                CredentialTypeForm::Default => {} // No username field for Default
-                CredentialTypeForm::Password
-                | CredentialTypeForm::KeyFile
-                | CredentialTypeForm::KeyData => self.credential_form.username.push(c),
-            },
-            4 => match self.credential_form.credential_type {
-                CredentialTypeForm::Default => {} // No field 4 for Default
-                CredentialTypeForm::Password => self.credential_form.password.push(c),
-                CredentialTypeForm::KeyFile => self.credential_form.ssh_key_path.push(c),
-                CredentialTypeForm::KeyData => self.credential_form.ssh_key_data.push(c),
-            },
-            5 => match self.credential_form.credential_type {
-                CredentialTypeForm::KeyFile | CredentialTypeForm::KeyData => {
-                    self.credential_form.passphrase.push(c)
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-    }
-
-    fn remove_char_from_credential_field(&mut self) {
-        let field = self.credential_form.current_field;
-        match field {
-            0 => {
-                self.credential_form.name.pop();
-            }
-            1 => {
-                self.credential_form.description.pop();
-            }
-            2 => {} // Credential type
-            3 => match self.credential_form.credential_type {
-                CredentialTypeForm::Default => {}
-                CredentialTypeForm::Password
-                | CredentialTypeForm::KeyFile
-                | CredentialTypeForm::KeyData => {
-                    self.credential_form.username.pop();
-                }
-            },
-            4 => match self.credential_form.credential_type {
-                CredentialTypeForm::Default => {}
-                CredentialTypeForm::Password => {
-                    self.credential_form.password.pop();
-                }
-                CredentialTypeForm::KeyFile => {
-                    self.credential_form.ssh_key_path.pop();
-                }
-                CredentialTypeForm::KeyData => {
-                    self.credential_form.ssh_key_data.pop();
-                }
-            },
-            5 => match self.credential_form.credential_type {
-                CredentialTypeForm::KeyFile | CredentialTypeForm::KeyData => {
-                    self.credential_form.passphrase.pop();
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-    }
-
-    /// Saves the credential form. Returns `true` if the credential was stored.
-    fn save_credential_from_form(&mut self) -> bool {
-        use crate::credentials::{SensitiveString, SshCredential};
-        use std::path::PathBuf;
-
-        if self.credential_form.name.trim().is_empty() {
-            self.set_status_message("Credential name cannot be empty");
-            return false;
-        }
-
-        let credential = match self.credential_form.credential_type {
-            CredentialTypeForm::Default => SshCredential::Default,
-            CredentialTypeForm::Password => {
-                if self.credential_form.username.trim().is_empty()
-                    || self.credential_form.password.trim().is_empty()
-                {
-                    self.set_status_message("Username and password are required");
-                    return false;
-                }
-                SshCredential::Password {
-                    username: self.credential_form.username.clone(),
-                    password: SensitiveString::new(self.credential_form.password.clone()),
-                }
-            }
-            CredentialTypeForm::KeyFile => {
-                if self.credential_form.username.trim().is_empty()
-                    || self.credential_form.ssh_key_path.trim().is_empty()
-                {
-                    self.set_status_message("Username and SSH key path are required");
-                    return false;
-                }
-                SshCredential::Key {
-                    username: self.credential_form.username.clone(),
-                    private_key_path: PathBuf::from(&self.credential_form.ssh_key_path),
-                    passphrase: if self.credential_form.passphrase.trim().is_empty() {
-                        None
-                    } else {
-                        Some(SensitiveString::new(
-                            self.credential_form.passphrase.clone(),
-                        ))
-                    },
-                }
-            }
-            CredentialTypeForm::KeyData => {
-                if self.credential_form.username.trim().is_empty()
-                    || self.credential_form.ssh_key_data.trim().is_empty()
-                {
-                    self.set_status_message("Username and SSH key data are required");
-                    return false;
-                }
-                SshCredential::KeyData {
-                    username: self.credential_form.username.clone(),
-                    private_key_data: SensitiveString::new(
-                        self.credential_form.ssh_key_data.clone(),
-                    ),
-                    passphrase: if self.credential_form.passphrase.trim().is_empty() {
-                        None
-                    } else {
-                        Some(SensitiveString::new(
-                            self.credential_form.passphrase.clone(),
-                        ))
-                    },
-                }
-            }
-        };
-
-        let description = if self.credential_form.description.trim().is_empty() {
-            None
-        } else {
-            Some(self.credential_form.description.clone())
-        };
-
-        // Check if we're editing an existing credential or creating a new one
-        let result = if let Some(credential_id) = &self.editing_credential_id {
-            // Update existing credential
-            self.credential_store.update_credential(
-                credential_id,
-                self.credential_form.name.clone(),
-                description,
-                credential,
-            )
-        } else {
-            // Create new credential
-            self.credential_store
-                .store_credential(self.credential_form.name.clone(), description, credential)
-                .map(|_| ())
-        };
-
-        match result {
-            Ok(_) => {
-                let message = if self.editing_credential_id.is_some() {
-                    "Credential updated successfully"
-                } else {
-                    "Credential saved successfully"
-                };
-                self.set_status_message(message);
-                self.reload_credentials();
-                self.credential_form = CredentialForm::default();
-                self.editing_credential_id = None;
-                true
-            }
-            Err(e) => {
-                self.set_status_message(format!("Failed to save credential: {}", e));
-                false
-            }
-        }
-    }
-
     fn cycle_monitor_type(&mut self, forward: bool) {
         self.node_form.monitor_type = if forward {
             match self.node_form.monitor_type {
@@ -2918,74 +1980,6 @@ impl NetworkMonitorTui {
                 MonitorTypeForm::Ping => MonitorTypeForm::Http,
             }
         };
-        // Reset credential selection when monitor type changes
-        self.node_form.credential_index = None;
-        self.node_form.credential_id = None;
-    }
-
-    fn get_compatible_credentials(&self) -> Vec<&CredentialSummary> {
-        // HTTP monitors don't use credentials
-        // Ping and TCP monitors use SSH credentials for interactive connections
-        match self.node_form.monitor_type {
-            MonitorTypeForm::Http => vec![], // No credentials for HTTP
-            MonitorTypeForm::Ping | MonitorTypeForm::Tcp => {
-                // All current credentials are SSH credentials, so return all
-                self.credentials.iter().collect()
-            }
-        }
-    }
-
-    fn cycle_credential(&mut self, forward: bool) {
-        let compatible_creds = self.get_compatible_credentials();
-
-        // If no compatible credentials, do nothing
-        if compatible_creds.is_empty() {
-            return;
-        }
-
-        // Clone credential IDs to avoid borrow issues
-        let cred_ids: Vec<String> = compatible_creds.iter().map(|c| c.id.clone()).collect();
-
-        let new_index = match self.node_form.credential_index {
-            None => {
-                // Currently "None" selected
-                if forward {
-                    Some(0) // Move to first credential
-                } else {
-                    Some(cred_ids.len() - 1) // Move to last credential
-                }
-            }
-            Some(current_idx) => {
-                if forward {
-                    if current_idx >= cred_ids.len() - 1 {
-                        None // Wrap around to "None"
-                    } else {
-                        Some(current_idx + 1)
-                    }
-                } else if current_idx == 0 {
-                    None // Wrap around to "None"
-                } else {
-                    Some(current_idx - 1)
-                }
-            }
-        };
-
-        self.node_form.credential_index = new_index;
-        self.node_form.credential_id = new_index.map(|idx| cred_ids[idx].clone());
-    }
-
-    fn node_form_from_node(&self, node: &Node) -> NodeForm {
-        let mut form = NodeForm::from_node(node);
-
-        // Set credential_index based on credential_id
-        if let Some(ref cred_id) = node.credential_id {
-            let compatible_creds = self.credentials.iter().collect::<Vec<_>>();
-            form.credential_index = compatible_creds.iter().position(|c| &c.id == cred_id);
-        } else {
-            form.credential_index = None;
-        }
-
-        form
     }
 
     fn add_char_to_form_field(&mut self, c: char) {
@@ -2999,28 +1993,17 @@ impl NetworkMonitorTui {
                     self.cycle_monitor_type(true);
                 }
             }
-            3 => {
-                // Credential selection
-                if c == ' ' {
-                    // Space cycles forward through credentials
-                    self.cycle_credential(true);
-                } else if c == 'x' || c == 'X' {
-                    // 'x' clears credential selection
-                    self.node_form.credential_index = None;
-                    self.node_form.credential_id = None;
-                }
-            }
-            4 => match self.node_form.monitor_type {
+            3 => match self.node_form.monitor_type {
                 MonitorTypeForm::Http => self.node_form.http_url.push(c),
                 MonitorTypeForm::Ping => self.node_form.ping_host.push(c),
                 MonitorTypeForm::Tcp => self.node_form.tcp_host.push(c),
             },
-            5 => match self.node_form.monitor_type {
+            4 => match self.node_form.monitor_type {
                 MonitorTypeForm::Http => self.node_form.http_expected_status.push(c),
                 MonitorTypeForm::Ping => self.node_form.ping_count.push(c),
                 MonitorTypeForm::Tcp => self.node_form.tcp_port.push(c),
             },
-            6 => match self.node_form.monitor_type {
+            5 => match self.node_form.monitor_type {
                 MonitorTypeForm::Ping => self.node_form.ping_timeout.push(c),
                 MonitorTypeForm::Tcp => self.node_form.tcp_timeout.push(c),
                 _ => {}
@@ -3039,8 +2022,7 @@ impl NetworkMonitorTui {
                 self.node_form.monitoring_interval.pop();
             }
             2 => {} // Monitor type
-            3 => {} // Credential
-            4 => match self.node_form.monitor_type {
+            3 => match self.node_form.monitor_type {
                 MonitorTypeForm::Http => {
                     self.node_form.http_url.pop();
                 }
@@ -3051,7 +2033,7 @@ impl NetworkMonitorTui {
                     self.node_form.tcp_host.pop();
                 }
             },
-            5 => match self.node_form.monitor_type {
+            4 => match self.node_form.monitor_type {
                 MonitorTypeForm::Http => {
                     self.node_form.http_expected_status.pop();
                 }
@@ -3062,7 +2044,7 @@ impl NetworkMonitorTui {
                     self.node_form.tcp_port.pop();
                 }
             },
-            6 => match self.node_form.monitor_type {
+            5 => match self.node_form.monitor_type {
                 MonitorTypeForm::Ping => {
                     self.node_form.ping_timeout.pop();
                 }
@@ -3087,7 +2069,6 @@ impl NetworkMonitorTui {
                     last_check: None,
                     response_time: None,
                     monitoring_interval: self.node_form.monitoring_interval.parse().unwrap_or(5),
-                    credential_id: self.node_form.credential_id.clone(),
                     consecutive_failures: 0,
                     max_check_attempts: crate::models::DEFAULT_MAX_CHECK_ATTEMPTS,
                     retry_interval: crate::models::DEFAULT_RETRY_INTERVAL,
@@ -3147,7 +2128,6 @@ impl NetworkMonitorTui {
         updated.name = self.node_form.name.clone();
         updated.detail = detail;
         updated.monitoring_interval = self.node_form.monitoring_interval.parse().unwrap_or(5);
-        updated.credential_id = self.node_form.credential_id.clone();
 
         if let Err(e) = self.database.update_node(&updated) {
             self.set_status_message(format!("Error updating node: {}", e));
@@ -3183,28 +2163,6 @@ impl NetworkMonitorTui {
                 } else {
                     self.set_status_message("Failed to delete node");
                 }
-            }
-        }
-    }
-
-    fn delete_credential_at_index(&mut self, index: usize) {
-        if let Some(credential) = self.credentials.get(index) {
-            if self
-                .credential_store
-                .delete_credential(&credential.id)
-                .is_ok()
-            {
-                self.credentials.remove(index);
-                self.set_status_message("Credential deleted");
-
-                // Adjust selection
-                if self.credentials.is_empty() {
-                    self.list_state.select(None);
-                } else if index >= self.credentials.len() {
-                    self.list_state.select(Some(self.credentials.len() - 1));
-                }
-            } else {
-                self.set_status_message("Failed to delete credential");
             }
         }
     }
@@ -3286,7 +2244,6 @@ impl NetworkMonitorTui {
                             last_check: None,
                             response_time: None,
                             monitoring_interval: import.monitoring_interval,
-                            credential_id: import.credential_id,
                             consecutive_failures: 0,
                             max_check_attempts: import.max_check_attempts,
                             retry_interval: import.retry_interval,
@@ -3347,7 +2304,6 @@ impl NetworkMonitorTui {
                             last_check: None,
                             response_time: None,
                             monitoring_interval: import.monitoring_interval,
-                            credential_id: import.credential_id,
                             consecutive_failures: 0,
                             max_check_attempts: import.max_check_attempts,
                             retry_interval: import.retry_interval,
@@ -3384,7 +2340,6 @@ impl NetworkMonitorTui {
                 name: node.name.clone(),
                 detail: node.detail.clone(),
                 monitoring_interval: node.monitoring_interval,
-                credential_id: node.credential_id.clone(),
                 max_check_attempts: node.max_check_attempts,
                 retry_interval: node.retry_interval,
             })
@@ -3426,17 +2381,6 @@ impl NetworkMonitorTui {
                 error!("Failed to load status history: {}", e);
                 self.status_changes.clear();
                 self.history_table_state.select(None);
-            }
-        }
-    }
-
-    fn reload_credentials(&mut self) {
-        match self.credential_store.list_credentials() {
-            Ok(credentials) => {
-                self.credentials = credentials;
-            }
-            Err(e) => {
-                error!("Failed to reload credentials: {}", e);
             }
         }
     }
@@ -3552,7 +2496,6 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
-    use crate::credentials::{SshCredential, StoredCredential};
     use crate::database::Database;
     use tempfile::tempdir;
 
@@ -3572,7 +2515,6 @@ mod tests {
             last_check: None,
             response_time,
             monitoring_interval: 60,
-            credential_id: None,
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
@@ -3591,7 +2533,6 @@ mod tests {
             last_check: None,
             response_time,
             monitoring_interval: 60,
-            credential_id: None,
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
@@ -3650,7 +2591,6 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 120,
-            credential_id: None,
             consecutive_failures: 2,
             max_check_attempts: 3,
             retry_interval: 15,
@@ -3668,7 +2608,6 @@ mod tests {
             last_check: Some(chrono::Utc::now()),
             response_time: Some(31),
             monitoring_interval: 5,
-            credential_id: None,
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
@@ -3696,10 +2635,7 @@ mod tests {
     fn test_enter_keeps_node_form_open_when_data_is_invalid() {
         let temp_dir = tempdir().unwrap();
         let database = Database::new(temp_dir.path().join("test.db")).unwrap();
-        // Construction reads the on-disk credential store; skip if unavailable
-        let Ok(mut tui) = NetworkMonitorTui::new(database) else {
-            return;
-        };
+        let mut tui = NetworkMonitorTui::new(database).unwrap();
 
         tui.state = AppState::AddNode;
         tui.node_form = NodeForm::default();
@@ -3722,28 +2658,6 @@ mod tests {
         assert!(close);
         assert_eq!(tui.nodes.len(), 1);
         assert_eq!(tui.nodes[0].name, "Typed a long name");
-    }
-
-    #[test]
-    fn test_enter_keeps_credential_form_open_when_name_is_empty() {
-        let temp_dir = tempdir().unwrap();
-        let database = Database::new(temp_dir.path().join("test.db")).unwrap();
-        let Ok(mut tui) = NetworkMonitorTui::new(database) else {
-            return;
-        };
-
-        tui.state = AppState::AddCredential;
-        tui.credential_form = CredentialForm::default();
-        tui.credential_form.credential_type = CredentialTypeForm::Password;
-        tui.credential_form.username = "admin".to_string();
-        tui.credential_form.password = "hunter2".to_string();
-        // name left empty
-
-        let close = tui.handle_credential_form_input(KeyCode::Enter);
-
-        assert!(!close, "form must stay open after a validation failure");
-        assert_eq!(tui.credential_form.username, "admin");
-        assert_eq!(tui.credential_form.password, "hunter2");
     }
 
     #[test]
@@ -3847,14 +2761,11 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let database = Database::new(&db_path).expect("Failed to create database");
 
-        // TUI initialization might fail if credential store exists from previous tests
-        let result = NetworkMonitorTui::new(database);
-        if let Ok(tui) = result {
-            // Verify monitoring started automatically
-            assert!(tui.monitoring_handle.is_some());
-            assert_eq!(tui.state, AppState::Main);
-            assert!(tui.nodes.is_empty());
-        }
+        let tui = NetworkMonitorTui::new(database).expect("TUI should initialize");
+        // Verify monitoring started automatically
+        assert!(tui.monitoring_handle.is_some());
+        assert_eq!(tui.state, AppState::Main);
+        assert!(tui.nodes.is_empty());
     }
 
     #[test]
@@ -3875,7 +2786,6 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 5,
-            credential_id: None,
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
@@ -3884,12 +2794,11 @@ mod tests {
         database.add_node(&node).expect("Failed to add node");
 
         // Create TUI
-        if let Ok(tui) = NetworkMonitorTui::new(database) {
-            assert_eq!(tui.nodes.len(), 1);
-            assert_eq!(tui.nodes[0].name, "Test HTTP Node");
-            // Table should have first row selected
-            assert_eq!(tui.table_state.selected(), Some(0));
-        }
+        let tui = NetworkMonitorTui::new(database).expect("TUI should initialize");
+        assert_eq!(tui.nodes.len(), 1);
+        assert_eq!(tui.nodes[0].name, "Test HTTP Node");
+        // Table should have first row selected
+        assert_eq!(tui.table_state.selected(), Some(0));
     }
 
     #[test]
@@ -4024,39 +2933,6 @@ mod tests {
     }
 
     // ============================================================================
-    // CredentialTypeForm Tests
-    // ============================================================================
-
-    #[test]
-    fn test_credential_type_form_display_default() {
-        assert_eq!(format!("{}", CredentialTypeForm::Default), "System Default");
-    }
-
-    #[test]
-    fn test_credential_type_form_display_password() {
-        assert_eq!(
-            format!("{}", CredentialTypeForm::Password),
-            "Username/Password"
-        );
-    }
-
-    #[test]
-    fn test_credential_type_form_display_keyfile() {
-        assert_eq!(format!("{}", CredentialTypeForm::KeyFile), "SSH Key File");
-    }
-
-    #[test]
-    fn test_credential_type_form_display_keydata() {
-        assert_eq!(format!("{}", CredentialTypeForm::KeyData), "SSH Key Data");
-    }
-
-    #[test]
-    fn test_credential_type_form_equality() {
-        assert_eq!(CredentialTypeForm::Default, CredentialTypeForm::Default);
-        assert_ne!(CredentialTypeForm::Default, CredentialTypeForm::Password);
-    }
-
-    // ============================================================================
     // NodeForm Tests
     // ============================================================================
 
@@ -4069,29 +2945,27 @@ mod tests {
         assert_eq!(form.http_url, "https://");
         assert_eq!(form.http_expected_status, "200");
         assert_eq!(form.current_field, 0);
-        assert_eq!(form.credential_id, None);
-        assert_eq!(form.credential_index, None);
     }
 
     #[test]
     fn test_node_form_get_field_count_http() {
         let mut form = NodeForm::default();
         form.monitor_type = MonitorTypeForm::Http;
-        assert_eq!(form.get_field_count(), 6);
+        assert_eq!(form.get_field_count(), 5);
     }
 
     #[test]
     fn test_node_form_get_field_count_ping() {
         let mut form = NodeForm::default();
         form.monitor_type = MonitorTypeForm::Ping;
-        assert_eq!(form.get_field_count(), 7);
+        assert_eq!(form.get_field_count(), 6);
     }
 
     #[test]
     fn test_node_form_get_field_count_tcp() {
         let mut form = NodeForm::default();
         form.monitor_type = MonitorTypeForm::Tcp;
-        assert_eq!(form.get_field_count(), 7);
+        assert_eq!(form.get_field_count(), 6);
     }
 
     #[test]
@@ -4205,7 +3079,6 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 10,
-            credential_id: Some("cred123".to_string()),
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
@@ -4217,7 +3090,6 @@ mod tests {
         assert_eq!(form.monitoring_interval, "10");
         assert_eq!(form.http_url, "https://example.com");
         assert_eq!(form.http_expected_status, "404");
-        assert_eq!(form.credential_id, Some("cred123".to_string()));
     }
 
     #[test]
@@ -4234,7 +3106,6 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 15,
-            credential_id: None,
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
@@ -4247,7 +3118,6 @@ mod tests {
         assert_eq!(form.ping_host, "8.8.8.8");
         assert_eq!(form.ping_count, "3");
         assert_eq!(form.ping_timeout, "2");
-        assert_eq!(form.credential_id, None);
     }
 
     #[test]
@@ -4264,7 +3134,6 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 20,
-            credential_id: Some("ssh_key".to_string()),
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
@@ -4277,7 +3146,6 @@ mod tests {
         assert_eq!(form.tcp_host, "localhost");
         assert_eq!(form.tcp_port, "9000");
         assert_eq!(form.tcp_timeout, "3");
-        assert_eq!(form.credential_id, Some("ssh_key".to_string()));
     }
 
     #[test]
@@ -4287,156 +3155,6 @@ mod tests {
         assert_eq!(form1.name, form2.name);
         assert_eq!(form1.monitor_type, form2.monitor_type);
         assert_eq!(form1.monitoring_interval, form2.monitoring_interval);
-    }
-
-    // ============================================================================
-    // CredentialForm Tests
-    // ============================================================================
-
-    #[test]
-    fn test_credential_form_default() {
-        let form = CredentialForm::default();
-        assert_eq!(form.name, "");
-        assert_eq!(form.description, "");
-        assert_eq!(form.credential_type, CredentialTypeForm::Default);
-        assert_eq!(form.username, "");
-        assert_eq!(form.password, "");
-        assert_eq!(form.ssh_key_path, "");
-        assert_eq!(form.ssh_key_data, "");
-        assert_eq!(form.passphrase, "");
-        assert_eq!(form.current_field, 0);
-    }
-
-    #[test]
-    fn test_credential_form_get_field_count_default() {
-        let mut form = CredentialForm::default();
-        form.credential_type = CredentialTypeForm::Default;
-        assert_eq!(form.get_field_count(), 3);
-    }
-
-    #[test]
-    fn test_credential_form_get_field_count_password() {
-        let mut form = CredentialForm::default();
-        form.credential_type = CredentialTypeForm::Password;
-        assert_eq!(form.get_field_count(), 5);
-    }
-
-    #[test]
-    fn test_credential_form_get_field_count_keyfile() {
-        let mut form = CredentialForm::default();
-        form.credential_type = CredentialTypeForm::KeyFile;
-        assert_eq!(form.get_field_count(), 6);
-    }
-
-    #[test]
-    fn test_credential_form_get_field_count_keydata() {
-        let mut form = CredentialForm::default();
-        form.credential_type = CredentialTypeForm::KeyData;
-        assert_eq!(form.get_field_count(), 6);
-    }
-
-    #[test]
-    fn test_credential_form_from_stored_credential_default() {
-        let stored = StoredCredential {
-            id: "test_id".to_string(),
-            name: "Test Cred".to_string(),
-            description: Some("Test description".to_string()),
-            credential: SshCredential::Default,
-            created_at: chrono::Utc::now(),
-            last_used: None,
-        };
-
-        let form = CredentialForm::from_stored_credential(&stored);
-        assert_eq!(form.name, "Test Cred");
-        assert_eq!(form.description, "Test description");
-        assert_eq!(form.credential_type, CredentialTypeForm::Default);
-        assert_eq!(form.username, "");
-        assert_eq!(form.password, "");
-    }
-
-    #[test]
-    fn test_credential_form_from_stored_credential_password() {
-        use crate::credentials::SensitiveString;
-
-        let stored = StoredCredential {
-            id: "test_id".to_string(),
-            name: "Password Cred".to_string(),
-            description: None,
-            credential: SshCredential::Password {
-                username: "user123".to_string(),
-                password: SensitiveString::new("secret123".to_string()),
-            },
-            created_at: chrono::Utc::now(),
-            last_used: None,
-        };
-
-        let form = CredentialForm::from_stored_credential(&stored);
-        assert_eq!(form.name, "Password Cred");
-        assert_eq!(form.description, "");
-        assert_eq!(form.credential_type, CredentialTypeForm::Password);
-        assert_eq!(form.username, "user123");
-        assert_eq!(form.password, "secret123");
-    }
-
-    #[test]
-    fn test_credential_form_from_stored_credential_keyfile() {
-        use crate::credentials::SensitiveString;
-        use std::path::PathBuf;
-
-        let stored = StoredCredential {
-            id: "test_id".to_string(),
-            name: "Key Cred".to_string(),
-            description: Some("SSH Key".to_string()),
-            credential: SshCredential::Key {
-                username: "keyuser".to_string(),
-                private_key_path: PathBuf::from("/home/user/.ssh/id_rsa"),
-                passphrase: Some(SensitiveString::new("keypass".to_string())),
-            },
-            created_at: chrono::Utc::now(),
-            last_used: None,
-        };
-
-        let form = CredentialForm::from_stored_credential(&stored);
-        assert_eq!(form.name, "Key Cred");
-        assert_eq!(form.description, "SSH Key");
-        assert_eq!(form.credential_type, CredentialTypeForm::KeyFile);
-        assert_eq!(form.username, "keyuser");
-        assert_eq!(form.ssh_key_path, "/home/user/.ssh/id_rsa");
-        assert_eq!(form.passphrase, "keypass");
-    }
-
-    #[test]
-    fn test_credential_form_from_stored_credential_keydata() {
-        use crate::credentials::SensitiveString;
-
-        let stored = StoredCredential {
-            id: "test_id".to_string(),
-            name: "Key Data Cred".to_string(),
-            description: None,
-            credential: SshCredential::KeyData {
-                username: "datauser".to_string(),
-                private_key_data: SensitiveString::new("-----BEGIN PRIVATE KEY-----".to_string()),
-                passphrase: None,
-            },
-            created_at: chrono::Utc::now(),
-            last_used: None,
-        };
-
-        let form = CredentialForm::from_stored_credential(&stored);
-        assert_eq!(form.name, "Key Data Cred");
-        assert_eq!(form.description, "");
-        assert_eq!(form.credential_type, CredentialTypeForm::KeyData);
-        assert_eq!(form.username, "datauser");
-        assert_eq!(form.ssh_key_data, "-----BEGIN PRIVATE KEY-----");
-        assert_eq!(form.passphrase, "");
-    }
-
-    #[test]
-    fn test_credential_form_clone() {
-        let form1 = CredentialForm::default();
-        let form2 = form1.clone();
-        assert_eq!(form1.name, form2.name);
-        assert_eq!(form1.credential_type, form2.credential_type);
     }
 
     // ============================================================================
@@ -4474,7 +3192,6 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 5,
-            credential_id: None,
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
@@ -4507,7 +3224,6 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 10,
-            credential_id: None,
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
@@ -4535,10 +3251,10 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_node_form_with_empty_credential_id() {
+    fn test_node_form_from_node_tcp_default_port() {
         let node = Node {
             id: None,
-            name: "No Cred Node".to_string(),
+            name: "SSH Node".to_string(),
             detail: MonitorDetail::Tcp {
                 host: "192.168.1.1".to_string(),
                 port: 22,
@@ -4548,14 +3264,12 @@ mod tests {
             last_check: None,
             response_time: None,
             monitoring_interval: 30,
-            credential_id: None,
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
         };
 
         let form = NodeForm::from_node(&node);
-        assert_eq!(form.credential_id, None);
         assert_eq!(form.tcp_host, "192.168.1.1");
         assert_eq!(form.tcp_port, "22");
     }
@@ -4669,43 +3383,6 @@ mod tests {
     }
 
     #[test]
-    fn test_credential_form_from_stored_with_no_description() {
-        let stored = StoredCredential {
-            id: "id123".to_string(),
-            name: "No Desc".to_string(),
-            description: None,
-            credential: SshCredential::Default,
-            created_at: chrono::Utc::now(),
-            last_used: None,
-        };
-
-        let form = CredentialForm::from_stored_credential(&stored);
-        assert_eq!(form.description, "");
-    }
-
-    #[test]
-    fn test_credential_form_from_stored_keyfile_without_passphrase() {
-        use std::path::PathBuf;
-
-        let stored = StoredCredential {
-            id: "key_id".to_string(),
-            name: "No Pass Key".to_string(),
-            description: Some("Key without passphrase".to_string()),
-            credential: SshCredential::Key {
-                username: "user".to_string(),
-                private_key_path: PathBuf::from("/path/to/key"),
-                passphrase: None,
-            },
-            created_at: chrono::Utc::now(),
-            last_used: None,
-        };
-
-        let form = CredentialForm::from_stored_credential(&stored);
-        assert_eq!(form.passphrase, "");
-        assert_eq!(form.ssh_key_path, "/path/to/key");
-    }
-
-    #[test]
     fn test_format_duration_edge_cases() {
         // Test 0 milliseconds
         assert_eq!(format_duration(0), "0s");
@@ -4769,35 +3446,12 @@ mod tests {
     }
 
     #[test]
-    fn test_credential_type_form_all_variants() {
-        let variants = vec![
-            CredentialTypeForm::Default,
-            CredentialTypeForm::Password,
-            CredentialTypeForm::KeyFile,
-            CredentialTypeForm::KeyData,
-        ];
-
-        for variant in variants {
-            // Test that copy works
-            let copy = variant;
-            assert_eq!(variant, copy);
-
-            // Test that display works
-            let display_str = format!("{}", variant);
-            assert!(!display_str.is_empty());
-        }
-    }
-
-    #[test]
     fn test_app_state_all_variants() {
         let variants = vec![
             AppState::Main,
             AppState::AddNode,
             AppState::EditNode,
             AppState::ViewHistory,
-            AppState::ManageCredentials,
-            AppState::AddCredential,
-            AppState::EditCredential,
             AppState::Help,
             AppState::ConfirmDelete,
             AppState::ImportModeSelect,
@@ -4824,7 +3478,6 @@ mod tests {
             last_check: None,
             response_time: Some(150),
             monitoring_interval: 7,
-            credential_id: Some("cred999".to_string()),
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
@@ -4848,7 +3501,6 @@ mod tests {
 
         assert_eq!(form.name, "Roundtrip Test");
         assert_eq!(form.monitoring_interval, "7");
-        assert_eq!(form.credential_id, Some("cred999".to_string()));
     }
 
     #[test]
@@ -4865,7 +3517,6 @@ mod tests {
             last_check: Some(chrono::Utc::now()),
             response_time: None,
             monitoring_interval: 15,
-            credential_id: None,
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
@@ -4902,7 +3553,6 @@ mod tests {
             last_check: Some(chrono::Utc::now()),
             response_time: Some(25),
             monitoring_interval: 60,
-            credential_id: Some("db_cred".to_string()),
             consecutive_failures: 0,
             max_check_attempts: 3,
             retry_interval: 15,
