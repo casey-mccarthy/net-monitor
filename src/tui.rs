@@ -2223,113 +2223,134 @@ impl NetworkMonitorTui {
         Ok(())
     }
 
-    fn import_nodes_skip_conflicts(&mut self, path: &PathBuf) {
-        match std::fs::read_to_string(path) {
-            Ok(data) => match serde_json::from_str::<Vec<NodeImport>>(&data) {
-                Ok(nodes_to_import) => {
-                    let existing_names: std::collections::HashSet<String> =
-                        self.nodes.iter().map(|n| n.name.clone()).collect();
-                    let mut imported = 0;
-                    let mut skipped = 0;
-                    for import in nodes_to_import {
-                        if existing_names.contains(&import.name) {
-                            skipped += 1;
-                            continue;
-                        }
-                        let mut node = Node {
-                            id: None,
-                            name: import.name,
-                            detail: import.detail,
-                            status: NodeStatus::Offline,
-                            last_check: None,
-                            response_time: None,
-                            monitoring_interval: import.monitoring_interval,
-                            consecutive_failures: 0,
-                            max_check_attempts: import.max_check_attempts,
-                            retry_interval: import.retry_interval,
-                        };
-                        if let Ok(id) = self.database.add_node(&node) {
-                            node.id = Some(id);
-                            if let Some(handle) = &self.monitoring_handle {
-                                let _ = handle.config_tx.send(NodeConfigUpdate::Add(node.clone()));
-                            }
-                            self.nodes.push(node);
-                            imported += 1;
-                        }
-                    }
-                    self.set_status_message(format!(
-                        "Imported {} nodes, skipped {} conflicts",
-                        imported, skipped
-                    ));
+    /// Reads and parses an import file.
+    ///
+    /// This has no side effects, so callers can validate the file before
+    /// touching any existing nodes.
+    fn read_import_file(path: &PathBuf) -> Result<Vec<NodeImport>> {
+        let data = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read import file: {}", e))?;
+        serde_json::from_str::<Vec<NodeImport>>(&data)
+            .map_err(|e| anyhow::anyhow!("Failed to parse import file: {}", e))
+    }
+
+    /// Builds a fresh, never-checked node from an import record.
+    fn node_from_import(import: NodeImport) -> Node {
+        Node {
+            id: None,
+            name: import.name,
+            detail: import.detail,
+            status: NodeStatus::Offline,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: import.monitoring_interval,
+            consecutive_failures: 0,
+            max_check_attempts: import.max_check_attempts,
+            retry_interval: import.retry_interval,
+        }
+    }
+
+    /// Persists an imported node, registers it with the monitoring engine and
+    /// adds it to the node list. Returns `false` if the database rejected it.
+    fn add_imported_node(&mut self, import: NodeImport) -> bool {
+        let mut node = Self::node_from_import(import);
+        match self.database.add_node(&node) {
+            Ok(id) => {
+                node.id = Some(id);
+                if let Some(handle) = &self.monitoring_handle {
+                    let _ = handle.config_tx.send(NodeConfigUpdate::Add(node.clone()));
                 }
-                Err(e) => {
-                    self.set_status_message(format!("Failed to parse import file: {}", e));
-                }
-            },
+                self.nodes.push(node);
+                true
+            }
             Err(e) => {
-                self.set_status_message(format!("Failed to read import file: {}", e));
+                error!("Failed to import node '{}': {}", node.name, e);
+                false
             }
         }
     }
 
+    fn import_nodes_skip_conflicts(&mut self, path: &PathBuf) {
+        let nodes_to_import = match Self::read_import_file(path) {
+            Ok(nodes) => nodes,
+            Err(e) => {
+                self.set_status_message(e.to_string());
+                return;
+            }
+        };
+
+        // Names already present, plus names seen earlier in this file so that
+        // duplicates within the import itself are also treated as conflicts.
+        let mut existing_names: std::collections::HashSet<String> =
+            self.nodes.iter().map(|n| n.name.clone()).collect();
+        let mut imported = 0;
+        let mut skipped = 0;
+        let mut failed = 0;
+        for import in nodes_to_import {
+            if !existing_names.insert(import.name.clone()) {
+                skipped += 1;
+                continue;
+            }
+            if self.add_imported_node(import) {
+                imported += 1;
+            } else {
+                failed += 1;
+            }
+        }
+
+        let mut message = format!("Imported {} nodes, skipped {} conflicts", imported, skipped);
+        if failed > 0 {
+            message.push_str(&format!(", {} failed", failed));
+        }
+        self.set_status_message(message);
+    }
+
     fn import_nodes_clear_all(&mut self, path: &PathBuf) {
-        // Remove all existing nodes from monitoring engine
+        // Validate the file before destroying anything: an unreadable or
+        // malformed file must leave the existing nodes untouched.
+        let nodes_to_import = match Self::read_import_file(path) {
+            Ok(nodes) => nodes,
+            Err(e) => {
+                self.set_status_message(format!("{} (existing nodes were kept)", e));
+                return;
+            }
+        };
+
+        // Clear from database first; if that fails nothing else has changed yet
+        if let Err(e) = self.database.delete_all_nodes() {
+            self.set_status_message(format!("Failed to clear nodes: {}", e));
+            return;
+        }
+
+        // Remove all existing nodes from the monitoring engine
         for node in &self.nodes {
             if let (Some(id), Some(handle)) = (node.id, &self.monitoring_handle) {
                 let _ = handle.config_tx.send(NodeConfigUpdate::Delete(id));
             }
         }
 
-        // Clear from database
-        if let Err(e) = self.database.delete_all_nodes() {
-            self.set_status_message(format!("Failed to clear nodes: {}", e));
-            return;
-        }
-
         // Clear in-memory state
         self.nodes.clear();
         self.table_state.select(None);
 
-        // Import all nodes from file
-        match std::fs::read_to_string(path) {
-            Ok(data) => match serde_json::from_str::<Vec<NodeImport>>(&data) {
-                Ok(nodes_to_import) => {
-                    let mut count = 0;
-                    for import in nodes_to_import {
-                        let mut node = Node {
-                            id: None,
-                            name: import.name,
-                            detail: import.detail,
-                            status: NodeStatus::Offline,
-                            last_check: None,
-                            response_time: None,
-                            monitoring_interval: import.monitoring_interval,
-                            consecutive_failures: 0,
-                            max_check_attempts: import.max_check_attempts,
-                            retry_interval: import.retry_interval,
-                        };
-                        if let Ok(id) = self.database.add_node(&node) {
-                            node.id = Some(id);
-                            if let Some(handle) = &self.monitoring_handle {
-                                let _ = handle.config_tx.send(NodeConfigUpdate::Add(node.clone()));
-                            }
-                            self.nodes.push(node);
-                            count += 1;
-                        }
-                    }
-                    if !self.nodes.is_empty() {
-                        self.table_state.select(Some(0));
-                    }
-                    self.set_status_message(format!("Cleared all nodes, imported {}", count));
-                }
-                Err(e) => {
-                    self.set_status_message(format!("Failed to parse import file: {}", e));
-                }
-            },
-            Err(e) => {
-                self.set_status_message(format!("Failed to read import file: {}", e));
+        let mut imported = 0;
+        let mut failed = 0;
+        for import in nodes_to_import {
+            if self.add_imported_node(import) {
+                imported += 1;
+            } else {
+                failed += 1;
             }
         }
+        if !self.nodes.is_empty() {
+            self.table_state.select(Some(0));
+        }
+
+        let mut message = format!("Cleared all nodes, imported {}", imported);
+        if failed > 0 {
+            message.push_str(&format!(", {} failed", failed));
+        }
+        self.set_status_message(message);
     }
 
     fn export_nodes_to_path(&mut self, path: &PathBuf) {
@@ -2502,6 +2523,153 @@ mod tests {
     // ============================================================================
     // NetworkMonitorTui Integration Tests
     // ============================================================================
+
+    /// Builds a TUI backed by a temporary database.
+    fn tui_with_temp_db() -> (tempfile::TempDir, NetworkMonitorTui) {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let database = Database::new(&db_path).expect("Failed to create database");
+        let tui = NetworkMonitorTui::new(database).expect("Failed to create TUI");
+        (temp_dir, tui)
+    }
+
+    #[test]
+    fn test_read_import_file_rejects_missing_and_malformed_files() {
+        let temp_dir = tempdir().unwrap();
+
+        let missing = temp_dir.path().join("does-not-exist.json");
+        assert!(NetworkMonitorTui::read_import_file(&missing).is_err());
+
+        let malformed = temp_dir.path().join("bad.json");
+        std::fs::write(&malformed, "{ this is not json").unwrap();
+        assert!(NetworkMonitorTui::read_import_file(&malformed).is_err());
+
+        let wrong_shape = temp_dir.path().join("wrong.json");
+        std::fs::write(&wrong_shape, r#"{"name": "single object, not a list"}"#).unwrap();
+        assert!(NetworkMonitorTui::read_import_file(&wrong_shape).is_err());
+    }
+
+    #[test]
+    fn test_clear_all_import_keeps_existing_nodes_when_file_is_invalid() {
+        let (temp_dir, mut tui) = tui_with_temp_db();
+
+        let mut node = Node {
+            id: None,
+            name: "Existing".to_string(),
+            detail: MonitorDetail::Http {
+                url: "https://example.com".to_string(),
+                expected_status: 200,
+            },
+            status: NodeStatus::Online,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 60,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
+        };
+        node.id = Some(tui.database.add_node(&node).unwrap());
+        tui.nodes.push(node);
+        tui.table_state.select(Some(0));
+
+        let bad_file = temp_dir.path().join("bad.json");
+        std::fs::write(&bad_file, "not json at all").unwrap();
+        tui.import_nodes_clear_all(&bad_file);
+
+        // Nothing was destroyed, on screen or on disk
+        assert_eq!(tui.nodes.len(), 1);
+        assert_eq!(tui.nodes[0].name, "Existing");
+        assert_eq!(tui.database.get_all_nodes().unwrap().len(), 1);
+        assert_eq!(tui.table_state.selected(), Some(0));
+
+        let missing = temp_dir.path().join("missing.json");
+        tui.import_nodes_clear_all(&missing);
+        assert_eq!(tui.nodes.len(), 1);
+        assert_eq!(tui.database.get_all_nodes().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_clear_all_import_replaces_nodes_with_valid_file() {
+        let (temp_dir, mut tui) = tui_with_temp_db();
+
+        let mut node = Node {
+            id: None,
+            name: "Old".to_string(),
+            detail: MonitorDetail::Http {
+                url: "https://old.example.com".to_string(),
+                expected_status: 200,
+            },
+            status: NodeStatus::Online,
+            last_check: None,
+            response_time: None,
+            monitoring_interval: 60,
+            consecutive_failures: 0,
+            max_check_attempts: 3,
+            retry_interval: 15,
+        };
+        node.id = Some(tui.database.add_node(&node).unwrap());
+        tui.nodes.push(node);
+
+        let imports = vec![
+            NodeImport {
+                name: "New A".to_string(),
+                detail: MonitorDetail::Tcp {
+                    host: "a.example.com".to_string(),
+                    port: 22,
+                    timeout: 5,
+                },
+                monitoring_interval: 30,
+                max_check_attempts: 3,
+                retry_interval: 15,
+            },
+            NodeImport {
+                name: "New B".to_string(),
+                detail: MonitorDetail::Ping {
+                    host: "10.0.0.1".to_string(),
+                    count: 1,
+                    timeout: 5,
+                },
+                monitoring_interval: 30,
+                max_check_attempts: 3,
+                retry_interval: 15,
+            },
+        ];
+        let good_file = temp_dir.path().join("good.json");
+        std::fs::write(&good_file, serde_json::to_string(&imports).unwrap()).unwrap();
+
+        tui.import_nodes_clear_all(&good_file);
+
+        let names: Vec<&str> = tui.nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["New A", "New B"]);
+        assert_eq!(tui.database.get_all_nodes().unwrap().len(), 2);
+        assert_eq!(tui.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_skip_conflicts_import_skips_duplicates_within_file() {
+        let (temp_dir, mut tui) = tui_with_temp_db();
+
+        let make = |name: &str| NodeImport {
+            name: name.to_string(),
+            detail: MonitorDetail::Tcp {
+                host: "host.example.com".to_string(),
+                port: 22,
+                timeout: 5,
+            },
+            monitoring_interval: 30,
+            max_check_attempts: 3,
+            retry_interval: 15,
+        };
+        let imports = vec![make("Dup"), make("Dup"), make("Unique")];
+        let file = temp_dir.path().join("dups.json");
+        std::fs::write(&file, serde_json::to_string(&imports).unwrap()).unwrap();
+
+        tui.import_nodes_skip_conflicts(&file);
+
+        let names: Vec<&str> = tui.nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["Dup", "Unique"]);
+        assert_eq!(tui.database.get_all_nodes().unwrap().len(), 2);
+    }
 
     fn latency_test_node(status: NodeStatus, response_time: Option<u64>) -> Node {
         Node {
