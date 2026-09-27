@@ -1,350 +1,102 @@
-# Development Workflow
+# Development workflow
 
-This document describes the standard development workflow for net-monitor.
-
-**This project uses REBASING to maintain clean, linear commit history.**
-
-## Workflow Overview
+Branch, commit, check, rebase, pull request. `main` is protected and every change goes through a PR, however small. Merging to `main` releases automatically.
 
 ```mermaid
 graph LR
-    A[Main Branch] --> B{Simple or Complex?}
-    B -->|Simple Fix| C[Commit to Main]
-    C --> J[Push to Main]
-    J --> I[Automatic Release]
-    B -->|Complex/Feature| D[Create Feature Branch]
-    D --> E[Development]
-    E --> F[Commit Changes]
-    F --> G[Rebase on Main]
-    G --> H[Create PR]
-    H --> K[Code Review]
-    K --> L[Merge to Main]
-    L --> I
+    A[main] --> B[branch: type/description]
+    B --> C[commit: type(scope): subject]
+    C --> D[fmt, clippy, test, build]
+    D --> E[rebase on main]
+    E --> F[pull request]
+    F --> G[CI + review]
+    G --> H[merge]
+    H --> I[release workflow: bump, tag, build, publish]
     I --> A
 ```
 
-## Two Workflows
-
-### 1. Direct to Main (Simple Changes)
-For quick fixes, doc updates, or small standalone changes:
-- Work directly on main branch
-- Commit with conventional commit message
-- Push to main
-- Automatic release triggered
-
-### 2. Feature Branch + Rebase (Complex Changes)
-For features, refactors, or changes requiring review:
-- Create feature branch
-- Make changes and commits
-- **Rebase on main** (not merge!)
-- Create pull request
-- Code review
-- Merge to main
-- Automatic release triggered
-
-## Step-by-Step Process
-
-### 1. Start New Feature
+## 1. Branch
 
 ```bash
-# Ensure you're on main and up to date
-git checkout main
-git pull origin main
-
-# Create feature branch
-git checkout -b feature/your-feature-name
-# OR use Claude command: "Create a feature branch for [description]"
+git checkout main && git pull origin main
+git checkout -b fix/123-short-description
 ```
 
-### 2. Development
+Prefix with `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, or `chore`. Add the issue number when there is one. `/create-feature-branch` does this for you.
 
-Write your code following project conventions:
-- Follow Rust idioms and best practices
-- Maintain consistent code style
-- Add tests for new functionality
-- Update documentation as needed
+## 2. Commit
 
-### 3. Commit Changes
-
-Use conventional commits for all changes:
-
-```bash
-# Stage changes
-git add .
-
-# Create conventional commit
-git commit -m "feat: add new monitoring metric"
-# OR use Claude command: "Commit my changes"
-```
-
-Commit types:
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation only
-- `style`: Formatting, no code change
-- `refactor`: Code restructuring
-- `perf`: Performance improvement
-- `test`: Adding tests
-- `chore`: Maintenance
-
-### 4. Keep Branch Updated
-
-Regularly sync with main to avoid conflicts. **Use rebase for clean history:**
-
-```bash
-# Fetch latest changes
-git fetch origin main
-
-# Rebase your branch on main (preferred)
-git rebase origin/main
-
-# Force push with safety flag
-git push origin feature/your-feature-name --force-with-lease
-
-# OR use Claude command: "Sync with main"
-```
-
-### 5. Pre-PR Checklist
-
-Before creating a PR, ensure:
-
-- [ ] All tests pass: `cargo test`
-- [ ] Code compiles without warnings: `cargo build`
-- [ ] Code is formatted: `cargo fmt`
-- [ ] Linting passes: `cargo clippy`
-- [ ] Documentation is updated
-- [ ] Commit messages follow convention
-
-### 6. Create Pull Request
-
-```bash
-# Rebase on main first!
-git fetch origin main && git rebase origin/main
-
-# Push your branch (or force push if already exists)
-git push -u origin feature/your-feature-name --force-with-lease
-
-# Create PR via GitHub CLI
-gh pr create --title "feat: your feature" --body "Description"
-
-# OR use Claude command for all steps: "/quick-pr feature-name"
-# OR just create PR: "/prepare-pr"
-```
-
-PR should include:
-- Clear title following commit convention
-- Description of changes
-- Testing performed
-- Screenshots if UI changes
-- Related issue references
-- **Clean, rebased commit history**
-
-### 7. Code Review Process
-
-#### For Authors:
-- Respond to all feedback
-- Make requested changes
-- Re-request review when ready
-- Keep PR updated with main
-
-#### For Reviewers:
-- Check code quality and style
-- Verify tests are adequate
-- Ensure documentation is updated
-- Test functionality locally if needed
-
-### 8. Merging
-
-Once approved:
-1. **Rebase on main one final time** to ensure linear history
-2. All CI checks pass
-3. Merge to main (can use squash if commits need cleanup)
-4. Delete feature branch after merge
-5. Automatic release process begins
-
-```bash
-# Before merging, final rebase
-git fetch origin main
-git rebase origin/main
-git push origin feature/your-feature-name --force-with-lease
-
-# Then merge via GitHub UI or:
-gh pr merge --merge  # or --squash if needed
-```
-
-### 9. Release Process
-
-Releases are automated based on commits:
-
-- Breaking changes → Major version bump
-- Features → Minor version bump  
-- Fixes → Patch version bump
-
-The release workflow:
-1. Detects version bump needed
-2. Updates version in Cargo.toml
-3. Creates git tag
-4. Builds binaries for all platforms
-5. Creates GitHub release with changelog
-
-## Branch Naming Conventions
-
-- `feature/` - New features
-- `fix/` - Bug fixes
-- `docs/` - Documentation updates
-- `chore/` - Maintenance tasks
-- `refactor/` - Code refactoring
-
-Examples:
-- `feature/email-notifications`
-- `fix/connection-timeout`
-- `docs/update-readme`
-- `chore/update-dependencies`
-
-## Commit Message Examples
-
-### Good Examples
+Conventional commits, enforced by `.commitlintrc.json`:
 
 ```
-feat(monitor): add retry logic for failed connections
+type(scope): subject
 
-Implements exponential backoff for connection retries
-to improve reliability during network issues.
+Optional body explaining why.
 
 Closes #123
 ```
 
-```
-fix(database): prevent connection pool exhaustion
+The type sets the version bump (`feat` minor, everything else patch, `!` or `BREAKING CHANGE:` major) and the release notes section. `/commit-feature` writes one for you.
 
-Ensures connections are properly released even when
-errors occur during query execution.
-```
-
-```
-docs: update installation instructions for macOS
-```
-
-### Bad Examples
-
-```
-Fixed bug          # Too vague
-Update code        # No context
-WIP               # Don't commit WIP
-various changes   # Be specific
-```
-
-## Emergency Hotfix Process
-
-For critical production issues:
-
-1. Create branch from main: `fix/critical-issue`
-2. Make minimal fix
-3. Test thoroughly
-4. Create PR with `[HOTFIX]` prefix
-5. Get expedited review
-6. Merge immediately
-7. Verify fix in production
-
-## Tips for Success
-
-### Do:
-- Commit early and often
-- Write descriptive commit messages
-- Keep PRs focused and small
-- Test your changes thoroughly
-- Document complex logic
-- Ask for help when stuck
-
-### Don't:
-- Commit directly to main
-- Mix unrelated changes in one PR
-- Leave TODO comments without tickets
-- Ignore CI failures
-- Skip documentation updates
-- Merge without review
-
-## Useful Git Commands
+## 3. Check before every commit
 
 ```bash
-# View recent commits
-git log --oneline -10
+cargo fmt
+cargo fmt -- --check
+RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warnings
+RUSTFLAGS="-A dead_code" cargo test
+RUSTFLAGS="-A dead_code" cargo build --release
+```
 
-# Check what changed
-git diff
+If `cargo fmt` changed anything, commit it before you push. `/pre-commit-checks` runs the lot.
 
-# Undo last commit (keep changes)
-git reset --soft HEAD~1
+## 4. Rebase, never merge
 
-# Update commit message
-git commit --amend
-
-# Interactive rebase (clean history before PR)
-git rebase -i HEAD~3
-
-# Rebase on main
+```bash
 git fetch origin main && git rebase origin/main
-
-# Abort rebase if conflicts are too complex
-git rebase --abort
-
-# Continue rebase after resolving conflicts
-git add .
-git rebase --continue
-
-# Force push safely after rebase
-git push origin branch-name --force-with-lease
-
-# Stash changes temporarily
-git stash
-git stash pop
-
-# View commit history graph
-git log --graph --oneline --all
+git push -u origin fix/123-short-description --force-with-lease
 ```
 
-## Claude Commands Available
+Always `--force-with-lease`, never `--force`. `/sync-main` does this.
 
-- **/create-feature-branch**: Start new feature development on a branch
-- **/commit-feature**: Create conventional commit
-- **/sync-main**: Rebase branch on latest main (uses rebase by default)
-- **/prepare-pr**: Generate PR with changelog from current branch
-- **/quick-pr**: Complete workflow - create branch, work, rebase, create PR (all-in-one)
-- **/release**: Trigger new version release
+## 5. Pull request
 
-See `.claude/commands/` for detailed documentation.
+Use the template. Conventional-commit title, `Closes #123` in the body, and say how you tested it. `/quick-pr` does steps 4 and 5 together.
 
-## Quick Start Examples
+Reviewers check that the change is small, tested, documented, and that the commit types are honest, because they become the changelog.
 
-### Simple fix workflow:
+## 6. Merge
+
+Rebase-merge (or squash when the commits need cleanup, keeping a conventional subject). Delete the branch. The Release workflow now:
+
+1. Works out the bump from the commits since the last tag.
+2. Commits `chore: bump version to X.Y.Z` and tags `vX.Y.Z` on `main`.
+3. Builds Linux, macOS Intel, macOS ARM, and Windows archives.
+4. Publishes the release with notes from `scripts/release-notes.sh`.
+
+That bump commit is the one commit that lands on `main` without a PR. It is skipped by the workflow and by the release notes.
+
+## Hotfixes
+
+Same flow. The only difference is that the reviewer looks at it now instead of tomorrow. There is no path around the PR.
+
+## Git reminders
+
 ```bash
-# Work directly on main
-git checkout main
-git pull origin main
-# make changes
-git add .
-git commit -m "fix: description"
-git push origin main
-# Automatic release triggers!
+git log --oneline -10                      # recent history
+git rebase -i HEAD~3                       # tidy commits before opening the PR
+git rebase --abort                         # bail out of a bad rebase
+git add . && git rebase --continue         # after fixing conflicts
+git stash && git stash pop                 # park changes
+scripts/release-notes.sh 1.5.0 v1.4.10     # preview the next release notes
 ```
 
-### Feature workflow:
-```bash
-# Use quick-pr command for guided workflow
-/quick-pr email-notifications
+## Slash commands
 
-# OR manual steps:
-git checkout -b feature/email-notifications
-# make changes and commits
-git fetch origin main && git rebase origin/main
-git push -u origin feature/email-notifications --force-with-lease
-gh pr create
-```
-
-## Getting Help
-
-- Check existing issues on GitHub
-- Review this documentation
-- Ask in PR comments
-- Use Claude commands for automation
-- Consult Rust documentation
+- `/create-feature-branch`: new branch with the right name
+- `/commit-feature`: conventional commit for the staged changes
+- `/pre-commit-checks`: fmt, clippy, tests, build
+- `/check-conventional-commits`: audit the branch's commit messages
+- `/sync-main`: rebase on `main` and force-with-lease push
+- `/quick-pr`: rebase and open the PR
+- `/release`: explains and previews the automatic release

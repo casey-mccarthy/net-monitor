@@ -1,33 +1,40 @@
 # Net Monitor
 
-A terminal-based network monitoring tool built with Rust. Monitors HTTP endpoints, TCP ports, and ICMP ping targets through an interactive TUI.
+A terminal-based network monitor written in Rust. It watches HTTP endpoints, TCP ports, and ICMP ping targets, records every status change in SQLite, and lets you jump from a node straight into a browser tab or an SSH session.
 
 ## Features
 
-- **HTTP/HTTPS monitoring** — validate endpoints by expected status code
-- **TCP port checks** — verify connectivity to any host and port
-- **ICMP ping** — monitor network host availability
-- **Soft/hard state model** — reduces false positives by requiring consecutive failures before marking a node offline
-- **Persistent storage** — SQLite database with automatic schema migrations
-- **Import/Export** — JSON-based node configuration for portability
-- **Cross-platform** — runs on Linux, macOS, and Windows
+- **HTTP/HTTPS** — request a URL and compare the status code to the one you expect. Self-signed certificates are accepted, so internal services work out of the box.
+- **TCP** — open a connection to a host and port within a timeout.
+- **Ping** — ICMP echo with a configurable count and timeout. Accepts hostnames as well as IP addresses, and works without root on Linux and macOS.
+- **Soft/hard state model** — one failed check marks a node *Degraded*; only consecutive failures mark it *Offline*. Fewer false alarms.
+- **Status history** — every status transition is stored with how long the previous state lasted, so the history view shows uptime and outage lengths.
+- **Connect** — press Enter on a node to open it: HTTP nodes open in your browser, ping and TCP nodes open an SSH session in a new terminal window.
+- **Import/Export** — node configuration as JSON.
+- **Cross-platform** — Linux, macOS, and Windows.
 
 ## Installation
 
-### Pre-built Binaries
+### Pre-built binaries
 
-Download from the [Releases page](https://github.com/casey-mccarthy/net-monitor/releases):
+Every release on the [Releases page](https://github.com/casey-mccarthy/net-monitor/releases) ships one archive per platform:
 
-| Platform | Binary |
+| Platform | Archive |
 |---|---|
-| Linux x64 | `net-monitor-linux-x64` |
-| macOS Intel | `net-monitor-macos-x64` |
-| macOS Apple Silicon | `net-monitor-macos-arm64` |
-| Windows x64 | `net-monitor-windows-x64.exe` |
+| Linux x64 | `net-monitor-vX.Y.Z-linux-x64.tar.gz` |
+| macOS Intel | `net-monitor-vX.Y.Z-macos-x64.tar.gz` |
+| macOS Apple Silicon | `net-monitor-vX.Y.Z-macos-arm64.tar.gz` |
+| Windows x64 | `net-monitor-vX.Y.Z-windows-x64.zip` |
 
-### Build from Source
+Extract the archive and run the `net-monitor` binary inside it. SHA256 checksums for every archive are in `checksums.txt`.
 
-Requires Rust 1.70+ and `libssl-dev` on Linux.
+### Build from source
+
+You need a current stable Rust toolchain. On Linux you also need GTK 3 (native file dialogs) and the OpenSSL headers:
+
+```bash
+sudo apt-get install libgtk-3-dev libssl-dev pkg-config   # Debian/Ubuntu
+```
 
 ```bash
 git clone https://github.com/casey-mccarthy/net-monitor.git
@@ -38,84 +45,112 @@ cargo build --release
 
 ## Usage
 
-Launch the application:
-
 ```bash
 net-monitor
 ```
 
-### Keyboard Shortcuts
+Monitoring starts as soon as the app launches. Press `?` in any view for context-sensitive help.
+
+### Keys
 
 | Key | Action |
 |---|---|
-| `q` | Quit |
-| `a` | Add node |
-| `e` | Edit selected node |
-| `d` | Delete selected node |
-| `m` | Start/stop monitoring |
-| `h` | View status history |
-| `r` | Reorder nodes |
-| `i` | Import nodes from JSON |
-| `x` | Export nodes to JSON |
-| `Enter` | Connect to selected node |
+| `↑` / `↓` | Select a node |
+| `Enter` | Connect to the selected node (browser for HTTP, SSH for ping and TCP) |
+| `m` | Start / stop monitoring |
+| `a` | Add a node |
+| `e` | Edit the selected node |
+| `d` | Delete the selected node (asks for confirmation) |
+| `h` | Status history for the selected node |
+| `r` | Reorder nodes: `↑` / `↓` to move, `r` to save, `Esc` to cancel |
+| `i` | Import nodes from a JSON file |
+| `x` | Export nodes to a JSON file |
+| `b` | About |
 | `?` | Help |
-| `Up/Down` | Navigate |
+| `q` | Quit |
 
-### Monitor Types
+In the node form, `Tab` and `Shift+Tab` move between fields, `←` / `→` or `Space` change the monitor type, `Enter` saves, and `Esc` cancels.
 
-**HTTP/HTTPS** — monitor web endpoints and APIs with expected status code validation.
+### Monitor types
 
-**TCP** — check port connectivity on any host (e.g., database ports, service ports).
+Every node has a name, a monitoring interval in seconds, and one of these checks:
 
-**Ping** — ICMP availability checks with configurable count and timeout.
+| Type | Fields | Online when |
+|---|---|---|
+| `Http` | `url`, `expected_status` | the response status equals `expected_status` |
+| `Tcp` | `host`, `port`, `timeout` | a TCP connection succeeds within `timeout` seconds |
+| `Ping` | `host`, `count`, `timeout` | any one of `count` echo requests is answered within `timeout` seconds |
 
-### Node States
+A URL without a scheme is treated as `https://`.
+
+### Node states
 
 | State | Meaning |
 |---|---|
-| Online | Responding normally |
-| Degraded | Failed check, not yet confirmed down (soft state) |
-| Offline | Failed consecutive checks (hard state, default: 3 attempts) |
+| Online | The last check succeeded |
+| Degraded | A check failed, but not enough in a row to call the node down (soft state). It is rechecked every `retry_interval` seconds, 15 by default. |
+| Offline | `max_check_attempts` consecutive checks failed, 3 by default (hard state). |
+
+One successful check returns a node to Online from either state. Every transition between these states is recorded in the status history.
 
 ### Import/Export
 
-Nodes can be imported and exported as JSON. See [sample_nodes.json](sample_nodes.json) for the format.
+Files are a JSON array of nodes. `max_check_attempts` and `retry_interval` are optional and default to 3 and 15. [sample_nodes.json](sample_nodes.json) has an example of each type.
 
 ```json
 [
   {
     "name": "GitHub",
     "monitoring_interval": 15,
-    "detail": {
-      "type": "Http",
-      "url": "https://github.com",
-      "expected_status": 200
-    }
+    "detail": { "type": "Http", "url": "https://github.com", "expected_status": 200 }
+  },
+  {
+    "name": "Postgres",
+    "monitoring_interval": 30,
+    "detail": { "type": "Tcp", "host": "db.internal", "port": 5432, "timeout": 5 }
+  },
+  {
+    "name": "Router",
+    "monitoring_interval": 5,
+    "detail": { "type": "Ping", "host": "192.168.1.1", "count": 3, "timeout": 5 }
   }
 ]
 ```
 
-### Data Storage
+Importing offers two modes. **Import & Skip Conflicts** keeps your existing nodes and skips any imported node whose name already exists. **Clear & Import All** replaces every node with the file's contents. The file is validated before anything is deleted.
 
-Data is stored locally in a SQLite database:
+### Data storage
+
+The SQLite database (`network_monitor.db`) and the log file (`net-monitor.log`) live in the platform data directory:
 
 | Platform | Path |
 |---|---|
 | Linux | `~/.local/share/net-monitor/` |
-| macOS | `~/Library/Application Support/net-monitor/` |
-| Windows | `%LOCALAPPDATA%\net-monitor\` |
+| macOS | `~/Library/Application Support/com.casey.net-monitor/` |
+| Windows | `%LOCALAPPDATA%\casey\net-monitor\data\` |
+
+The schema is migrated automatically on startup. Set `RUST_LOG=debug` for verbose logging.
 
 ## Development
 
 ```bash
-cargo build                # development build
-cargo test                 # run tests (excludes network tests)
-cargo fmt                  # format code
-cargo clippy               # lint
-cargo build --release      # release build
+cargo build
+RUSTFLAGS="-A dead_code" cargo test
+cargo fmt
+RUSTFLAGS="-A dead_code" cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-See [CLAUDE.md](CLAUDE.md) for the full development workflow and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+Tests that reach the network are behind the `network-tests` feature and stay off in CI: `cargo test --features network-tests`.
+
+[CLAUDE.md](CLAUDE.md) has the full workflow, [CONTRIBUTING.md](CONTRIBUTING.md) the contribution guidelines, and [tests/README.md](tests/README.md) the test layout.
+
+## Releases
+
+Every merge to `main` with a conventional commit triggers the release workflow. It bumps the version in `Cargo.toml`, tags the commit, builds the four archives, and publishes a GitHub release. The release notes are generated from the commits since the previous tag by `scripts/release-notes.sh`, grouped into breaking changes, features, fixes, performance, documentation, and other changes. Preview the notes for the next release locally:
+
+```bash
+scripts/release-notes.sh 1.5.0 v1.4.10
+```
 
 ## License
 

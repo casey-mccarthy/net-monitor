@@ -1,65 +1,35 @@
-# Completed Features
+# Shipped
 
-This document tracks features that have been successfully implemented and released.
+What the app does today, roughly in the order it arrived. Release-by-release detail is on the GitHub Releases page; from v1.4.11 on the notes are generated from the commit history.
 
-## Version 0.3.0 (Latest)
+## Monitoring
+- HTTP/HTTPS checks against an expected status code, self-signed certificates accepted
+- ICMP ping with count and timeout, hostnames accepted, no root needed on Linux/macOS
+- TCP port checks with a timeout
+- Soft/hard state model: Degraded after one failure, Offline after `max_check_attempts`, faster `retry_interval` while Degraded
+- Per-node monitoring interval, editable while monitoring runs
+- Failed checks report no latency
 
-### SSH Connection Support
-- **Released**: 2024-08-30
-- **Description**: Added SSH connection support using the system's default SSH configuration
-- Integration with existing monitoring framework
-- The encrypted credential store that originally shipped alongside this
-  feature has since been removed; SSH sessions rely on the user's own SSH
-  agent, keys, and config.
+## History
+- Status change log for every transition, with the duration of the previous state
+- History view per node with uptime/downtime and the most recent change reachable
+- Last status change time survives restarts
 
-## Version 0.2.0
+## TUI
+- Node table with name, target, type, status, latency, uptime/downtime, last check
+- Add / edit / delete with confirmation; forms stay open when a save fails
+- Reorder mode with persisted `display_order`
+- Import & Skip Conflicts / Clear & Import All, with the file validated before anything is deleted
+- Export to JSON
+- Context-sensitive help (`?`) and About (`b`)
+- Terminal restored on panic and around native file dialogs
 
-### GUI Improvements
-- **Released**: 2024-08-30
-- **Description**: Enhanced user interface
-- About dialog with version information
-- Improved window sizing and layout
-- Better error messaging
+## Connect
+- Enter opens HTTP nodes in the browser and ping/TCP nodes in an SSH terminal using the system `ssh`
 
-### Database Migrations
-- **Released**: 2024-08-30
-- **Description**: Automatic database schema updates
-- Seamless upgrades between versions
-- Data integrity preservation
-- Rollback capability
+## Removed
+- The encrypted credential store (#98). SSH relies on the user's agent, keys, and config.
 
-## Version 0.1.0 (Initial Release)
-
-### Core Monitoring
-- **Released**: 2024-08-01
-- **Description**: Basic monitoring functionality
-- HTTP/HTTPS endpoint monitoring
-- ICMP ping support
-- Real-time status updates
-
-### TUI Application
-- **Released**: 2024-08-01
-- **Description**: Terminal-based application
-- Cross-platform support (Windows, macOS, Linux)
-- Clean, intuitive terminal interface
-
-### Data Persistence
-- **Released**: 2024-08-01
-- **Description**: Local data storage
-- SQLite database integration
-- Historical monitoring data
-- Configuration persistence
-
-### Import/Export
-- **Released**: 2024-08-01
-- **Description**: Data portability
-- JSON format support
-- CSV import capability
-- Bulk node management
-
-## Feature Metrics
-
-- **Total Features Shipped**: 12
-- **Average Development Time**: 2 weeks
-- **Most Requested**: SSH support (implemented ✓)
-- **Next Priority**: Email notifications (see planned.md)
+## Storage and delivery
+- SQLite with idempotent startup migrations
+- Automated releases on merge to `main`: version bump, tag, four platform archives, checksums, generated release notes

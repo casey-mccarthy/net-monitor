@@ -1,161 +1,55 @@
-# Project State and Context
+# Project State
 
-This document maintains the current state of the net-monitor project for Claude session recovery.
+Orientation for a new session. Facts here are checked against the code; if they drift, fix them.
 
-## Project Overview
+## What it is
 
-**Name**: net-monitor  
-**Type**: Desktop Application  
-**Language**: Rust  
-**Current Version**: 0.2.1  
-**Repository**: https://github.com/casey-mccarthy/net-monitor
+- **net-monitor**: a Rust terminal application (ratatui + crossterm) that monitors HTTP endpoints, TCP ports, and ping targets and stores results in SQLite.
+- **Repository**: https://github.com/casey-mccarthy/net-monitor
+- **Version**: whatever `Cargo.toml` says. The release workflow bumps it; never bump it by hand.
+- **Default branch**: `main`, protected. All work goes through a pull request and a rebase.
 
-## Current Branch Status
+## Stack
 
-**Active Branch**: `add-ssh-button` (as of last update)  
-**Main Branch**: `main`  
-**Last Sync**: Check `git log` for latest
+| Concern | Crate |
+|---|---|
+| TUI | `ratatui`, `crossterm` |
+| Async runtime | `tokio` |
+| HTTP checks | `reqwest` (accepts self-signed certificates) |
+| Ping | `ping` (unprivileged datagram sockets where available) |
+| TCP | `std::net::TcpStream::connect_timeout` |
+| Storage | `rusqlite` with bundled SQLite |
+| File dialogs | `rfd` (needs GTK 3 on Linux) |
+| Open browser | `open` |
+| Logging | `tracing` to `net-monitor.log` in the data directory |
 
-## Recent Development
+There is no SSH library and no crypto: connecting to a node shells out to the system `ssh` in a new terminal window. The encrypted credential store that used to exist was removed in #98.
 
-### Last Session Work
-- Implemented workflow improvements
-- Created conventional commit structure
-- Set up Claude commands for development
-- Updated documentation to current state
-
-### Active Features
-- None currently in active development
-- See `.claude/features/in-progress.md` for tracking
-
-### Known Issues
-- No critical issues pending
-- Check GitHub Issues for latest
-
-## Technology Stack
-
-### Core Technologies
-- **Rust**: 2021 Edition
-- **TUI**: ratatui/crossterm
-- **Database**: SQLite via rusqlite
-- **Async**: Tokio runtime
-- **HTTP**: reqwest client
-- **SSH**: ssh2 library
-- **Crypto**: ring for encryption
-
-### Build System
-- **Cargo**: Standard Rust toolchain
-- **CI/CD**: GitHub Actions
-- **Release**: Automated via workflow
-
-## Development Workflow
-
-### Branch Strategy
-- `main`: Protected, stable releases only
-- Feature branches: `feature/`, `fix/`, `chore/`
-- All changes via PR with review
-
-### Commit Convention
-- Conventional commits enforced
-- Types: feat, fix, docs, style, refactor, perf, test, chore
-- Format: `type(scope): description`
-
-### Release Process
-- Semantic versioning (MAJOR.MINOR.PATCH)
-- Automated based on commit types
-- Changelog generated from commits
-
-## File Structure
+## Layout
 
 ```
-/
-├── src/                 # Source code
-├── .claude/            # Claude-specific docs
-│   ├── commands/       # Claude commands
-│   ├── features/       # Feature tracking
-│   ├── architecture/   # Technical docs
-│   ├── context/        # This file
-│   └── workflows/      # Process docs
-├── .github/            # GitHub config
-│   └── workflows/      # CI/CD
-├── docs/               # User documentation
-└── tests/              # Test files
+src/main.rs               entry point, logging, database path
+src/tui.rs                all views, forms, and key handling (largest file)
+src/monitoring_engine.rs  background loop, soft/hard state model
+src/monitor.rs            single-check implementations: HTTP, TCP, ping
+src/database.rs           SQLite schema, migrations, queries
+src/models.rs             data types shared by everything
+src/connection.rs         browser / SSH launch on Enter
+src/config.rs             empty AppConfig scaffold, unused
+tests/                    integration tests, one file per module
+scripts/release-notes.sh  release notes generator used by the release workflow
 ```
 
-## Database Schema
+## Workflow reminders
 
-**Current Version**: 3  
-**Tables**: nodes, monitoring_results, status_changes
+- Run `cargo fmt`, clippy with `-D warnings`, and the tests before every commit. `CLAUDE.md` has the exact commands.
+- Commit messages are conventional commits. They drive the version bump and the release notes.
+- Releases are automatic on merge to `main`. See `.claude/commands/release.md`.
+- `sample_nodes.json` must stay importable; `tests/import_export_tests.rs` checks it.
 
-See `.claude/architecture/database-schema.md` for details.
+## Session checklist
 
-## Testing Strategy
-
-- Unit tests in source files
-- Integration tests in `tests/`
-- Manual testing for TUI
-- CI runs tests on PR
-
-## Deployment
-
-### Platforms
-- Windows x64
-- macOS x64 & ARM64
-- Linux x64
-
-### Distribution
-- GitHub Releases with binaries
-- Automated build on version tag
-- Checksums provided
-
-## Environment Variables
-
-```bash
-RUST_LOG=debug  # Enable debug logging
-```
-
-## Common Commands
-
-```bash
-# Development
-cargo build
-cargo test
-cargo run
-
-# Release
-cargo build --release
-
-# With logging
-RUST_LOG=debug cargo run
-```
-
-## Session Recovery Checklist
-
-When starting a new Claude session:
-
-1. [ ] Check current branch: `git status`
-2. [ ] Review recent commits: `git log --oneline -10`
-3. [ ] Check for uncommitted changes: `git diff`
-4. [ ] Review active issues on GitHub
-5. [ ] Check `.claude/features/in-progress.md`
-6. [ ] Run tests: `cargo test`
-7. [ ] Build project: `cargo build`
-
-## Important Files to Review
-
-- `Cargo.toml` - Dependencies and version
-- `src/main.rs` - Entry point
-- `src/tui.rs` - TUI implementation
-- `src/models.rs` - Data structures
-- `.github/workflows/release.yml` - CI/CD
-
-## Notes for Next Session
-
-- Branch protection needs manual GitHub configuration
-- Commitlint npm package not installed (optional)
-- Consider implementing email notifications next
-- Review and update this file regularly
-
----
-
-*Last Updated*: During session setting up development workflow improvements
+1. `git status` and `git log --oneline -10`
+2. Skim open issues and PRs on GitHub
+3. `RUSTFLAGS="-A dead_code" cargo test`
+4. Check `.claude/features/in-progress.md` for anything mid-flight

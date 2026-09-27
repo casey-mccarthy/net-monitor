@@ -1,80 +1,23 @@
-# Planned Features
+# Planned
 
-This document tracks features planned for future releases of net-monitor.
+Ideas that have come up, roughly ordered by how likely they are to happen. Nothing here is committed to; open an issue with the `enhancement` label to argue for one.
 
-## Priority 1 - Near Term
+## Near term
+- **Notifications**: desktop or email alerts on Offline/Online transitions, with a digest mode to avoid alert storms.
+- **Response time history**: store the latency of every check (today only transitions are stored) and show a sparkline per node.
+- **Per-node thresholds**: warning/critical latency levels alongside the up/down state.
+- **History pruning**: the history tables only grow on transitions, but flapping nodes can still fill them; add a retention window.
 
-### Email Notifications
-- Send email alerts when nodes go down/up
-- Configurable alert thresholds
-- Digest mode for multiple alerts
-- SMTP configuration in settings
+## Medium term
+- **Certificate expiry check** for HTTPS nodes.
+- **DNS resolution check** as a monitor type.
+- **Bulk operations**: multi-select for delete and interval edits.
+- **Custom command checks**: run a script and treat exit 0 as Online.
 
-### Performance Graphs
-- Historical performance visualization
-- Response time trends
-- Availability percentage over time
-- Export graph data
+## Long term
+- Read-only web dashboard or JSON API.
+- Distributed agents reporting to one database.
 
-### Alert Thresholds
-- Configurable warning/critical levels
-- Different thresholds per node
-- Time-based escalation
-- Alert fatigue prevention
-
-## Priority 2 - Medium Term
-
-### Web Dashboard
-- Browser-based monitoring view
-- Real-time WebSocket updates
-- Mobile-responsive design
-- Read-only access for stakeholders
-
-### Custom Monitoring Scripts
-- User-defined check commands
-- Script output parsing
-- Custom success criteria
-- Sandboxed execution
-
-### Bulk Operations
-- Select multiple nodes for actions
-- Batch configuration updates
-- Group-based monitoring profiles
-- Bulk import improvements
-
-## Priority 3 - Long Term
-
-### Multi-User Support
-- User authentication
-- Role-based access control
-- Audit logging
-- Team collaboration features
-
-### API Access
-- RESTful API for integrations
-- Webhook notifications
-- Third-party tool integration
-- Monitoring-as-a-service
-
-### Advanced Monitoring
-- TCP/UDP port checks
-- Certificate expiration monitoring
-- DNS resolution monitoring
-- Synthetic transaction monitoring
-
-## Under Consideration
-
-- Cloud synchronization
-- Mobile app companion
-- Kubernetes/Docker monitoring
-- Log file monitoring
-- SNMP support
-- Distributed monitoring agents
-
-## Feature Request Process
-
-To request a new feature:
-1. Check if it's already listed above
-2. Open an issue on GitHub with the "enhancement" label
-3. Provide use case and expected behavior
-4. Community discussion will determine priority
+## Not planned
+- Multi-user accounts, roles, and audit logs. It is a local tool.
+- Storing SSH credentials. The system `ssh` and its agent already do this better.
