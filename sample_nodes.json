@@ -38,13 +38,15 @@
     }
   },
   {
-    "name": "Example Router",
+    "name": "Example Router SSH",
     "monitoring_interval": 30,
+    "max_check_attempts": 5,
+    "retry_interval": 10,
     "detail": {
-      "type": "Snmp",
-      "target": "192.168.1.1",
-      "community": "public",
-      "oid": "1.3.6.1.2.1.1.1.0"
+      "type": "Tcp",
+      "host": "192.168.1.1",
+      "port": 22,
+      "timeout": 5
     }
   }
-] 
+]
