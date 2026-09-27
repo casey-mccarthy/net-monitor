@@ -1,7 +1,7 @@
 mod common;
 
 use common::{fixtures, TestDatabase};
-use net_monitor::models::{NodeImport, NodeStatus};
+use net_monitor::models::{MonitorDetail, NodeImport, NodeStatus};
 
 #[test]
 fn test_node_import_export_workflow() {
@@ -180,4 +180,30 @@ fn test_node_import_preserves_detail_types() {
     let ping_reimport: NodeImport = serde_json::from_str(&ping_json).unwrap();
 
     assert_eq!(ping_reimport.detail, ping_node.detail);
+}
+
+#[test]
+fn test_sample_nodes_file_imports() {
+    // The sample file in the repository root is what the README points users
+    // at, so it must always parse with the current import format.
+    let imports: Vec<NodeImport> =
+        serde_json::from_str(include_str!("../sample_nodes.json")).expect("sample_nodes.json");
+
+    assert_eq!(imports.len(), 5);
+    assert!(imports
+        .iter()
+        .any(|n| matches!(n.detail, MonitorDetail::Http { .. })));
+    assert!(imports
+        .iter()
+        .any(|n| matches!(n.detail, MonitorDetail::Ping { .. })));
+    assert!(imports
+        .iter()
+        .any(|n| matches!(n.detail, MonitorDetail::Tcp { .. })));
+
+    let router = imports
+        .iter()
+        .find(|n| n.name == "Example Router SSH")
+        .unwrap();
+    assert_eq!(router.max_check_attempts, 5);
+    assert_eq!(router.retry_interval, 10);
 }
