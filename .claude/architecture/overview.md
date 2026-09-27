@@ -1,129 +1,67 @@
-# Net-Monitor Architecture Overview
+# Architecture
 
-## System Architecture
-
-Net-Monitor follows a modular architecture with clear separation of concerns:
+Net Monitor is a single binary with four parts. The TUI owns the screen, the monitoring engine owns the background loop, `monitor.rs` knows how to run one check, and the database persists everything.
 
 ```
-┌─────────────────────────────────────────┐
-│           TUI Layer (ratatui)           │
-│  - Terminal User Interface              │
-│  - Event Handling                       │
-│  - Real-time Updates                    │
-└─────────────────────────────────────────┘
-                    │
-┌─────────────────────────────────────────┐
-│         Application Core                │
-│  - State Management                     │
-│  - Business Logic                       │
-│  - Monitoring Orchestration             │
-└─────────────────────────────────────────┘
-                    │
-     ┌──────────────┼──────────────┐
-     │              │              │
-┌─────────┐ ┌──────────┐ ┌──────────────┐
-│Database │ │Monitoring│ │  Connection  │
-│  Layer  │ │  Engine  │ │  Strategies  │
-└─────────┘ └──────────┘ └──────────────┘
-     │              │              │
-┌─────────────────────────────────────────┐
-│         External Services               │
-│  - HTTP/HTTPS Endpoints                 │
-│  - Network Hosts (ICMP)                 │
-│  - SSH Servers                          │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│ tui.rs                                               │
+│ views, forms, key handling, import/export, connect   │
+└───────────────┬─────────────────────────┬────────────┘
+                │ start / stop / update   │ read & write
+                ▼                         ▼
+┌──────────────────────────┐   ┌──────────────────────┐
+│ monitoring_engine.rs     │   │ database.rs          │
+│ per-node tokio tasks,    │──▶│ SQLite: nodes,       │
+│ soft/hard state model    │   │ results, changes     │
+└───────────┬──────────────┘   └──────────────────────┘
+            │ check_node()
+            ▼
+┌──────────────────────────┐   ┌──────────────────────┐
+│ monitor.rs               │   │ connection.rs        │
+│ HTTP / TCP / ping checks │   │ browser or ssh on ⏎  │
+└──────────────────────────┘   └──────────────────────┘
 ```
 
-## Component Responsibilities
+## Components
 
-### TUI Layer (`tui.rs`)
-- Renders the terminal user interface using ratatui
-- Handles user input and events
-- Displays real-time monitoring status
-- Manages import/export operations
+### `tui.rs`
+Renders every view with ratatui and handles all input. Owns the in-memory list of nodes and the `TableState`. Talks to the engine through a `MonitoringHandle` (start, stop, send config updates) and receives status updates over a channel. Import/export, node forms, reorder mode, history, and the about/help overlays all live here. The terminal is restored on panic and around native file dialogs.
 
-### Application Core (`main.rs`)
-- Initializes and coordinates all components
-- Manages application lifecycle
-- Handles configuration and settings
-- Orchestrates background monitoring tasks
+### `monitoring_engine.rs`
+`start_monitoring` spawns one background thread that owns a tokio runtime and loops over the nodes. Each pass drains `NodeConfigUpdate` messages from the TUI (add, update, delete), then checks every node that is due: `check_node`, `evaluate_node_status`, persist runtime state, and send the updated node back over a channel. Checks run one after another, not concurrently, so a slow HTTP timeout delays the nodes behind it. Per-node state (previous status, time of the last transition) is seeded from the database on startup so a restart records no duplicate transitions.
 
-### Database Layer (`database.rs`)
-- SQLite database management
-- Schema migrations
-- CRUD operations for nodes and monitoring data
-- Query optimization and indexing
+The state model:
 
-### Monitoring Engine (`monitor.rs`)
-- Executes monitoring checks
-- Manages monitoring schedules
-- Collects and processes results
-- Handles retry logic and error recovery
+- **Online** → one failed check → **Degraded** (soft). The node is rechecked every `retry_interval` seconds instead of `monitoring_interval`.
+- **Degraded** → `max_check_attempts` consecutive failures → **Offline** (hard).
+- Any successful check → **Online**, immediately.
 
-### Connection Strategies (`connection.rs`)
-- Strategy pattern for different connection types
-- HTTP/HTTPS connection implementation
-- ICMP ping implementation
-- SSH connection implementation
-- Extensible for future connection types
+Every transition between the three states writes a `StatusChange` row with the time spent in the previous state, plus the `MonitoringResult` that caused it. Checks that leave the status unchanged are not stored, so the tables grow with transitions, not with checks.
 
-## Data Flow
+### `monitor.rs`
+Pure check functions. `check_http` normalises the URL (default scheme `https://`), accepts invalid certificates, and compares the status code. `check_tcp` resolves the host and tries every address with `connect_timeout`. `check_ping` resolves hostnames, sends up to `count` echo requests, and succeeds on the first reply; it retries with the other ICMP socket type if the platform default is unusable. Failed checks report no latency.
 
-1. **User Interaction** → TUI receives input
-2. **Command Processing** → Application core processes request
-3. **Data Operation** → Database read/write as needed
-4. **Monitoring Execution** → Connection strategy executes check
-5. **Result Processing** → Monitor engine processes results
-6. **State Update** → Database stores results
-7. **UI Update** → TUI reflects new state
+### `database.rs`
+One `Connection` per call (no pooling). Creates the three tables on startup and runs idempotent column migrations. See `database-schema.md`.
 
-## Concurrency Model
+### `connection.rs`
+What Enter does. HTTP nodes open in the default browser via the `open` crate. Ping and TCP nodes spawn the system `ssh` in a new terminal: Terminal.app on macOS, Windows Terminal or `cmd` on Windows, the first of gnome-terminal / konsole / xfce4-terminal / xterm found on Linux. A TCP node's port is passed to `ssh -p`.
 
-- **Main Thread**: TUI rendering and user interaction
-- **Tokio Runtime**: Async monitoring operations
-- **Background Tasks**: Periodic monitoring checks
-- **Database Access**: Thread-safe connection pooling
+### `models.rs`
+`Node`, `MonitorDetail` (`Http`, `Ping`, `Tcp`, tagged JSON enum), `NodeStatus`, `MonitoringResult`, `StatusChange`, and `NodeImport` (the import/export shape, which omits runtime state).
 
-## Security Considerations
+## Concurrency
 
-### Network Security
-- TLS/SSL for HTTPS connections
-- SSH connections use the system's own SSH configuration and keys; the
-  application stores no authentication secrets
+Two threads. The main thread renders the TUI and polls for input; the engine thread runs the monitoring loop with its own tokio runtime and blocks on each check. They talk over `std::sync::mpsc` channels: config updates and stop signals go in, updated nodes come out. Both open their own SQLite connections per call.
 
-### Data Protection
-- Local-only data storage
-- No cloud synchronization by default
-- User-controlled export operations
+## Data
 
-## Extension Points
+Everything is local. The database, the log file, and nothing else, in the platform data directory. No secrets are stored: SSH uses the user's own keys, agent, and config.
 
-### Adding New Connection Types
-1. Implement `ConnectionStrategy` trait
-2. Add variant to `ConnectionType` enum
-3. Update TUI to support configuration
-4. Add database migration if needed
+## Adding a monitor type
 
-### Adding New Features
-1. Extend models in `models.rs`
-2. Add database migrations
-3. Implement business logic
-4. Update TUI components
-
-## Performance Characteristics
-
-- **Startup Time**: < 500ms typical
-- **Memory Usage**: ~50MB baseline
-- **Monitoring Overhead**: < 1% CPU per check
-- **Database Size**: ~1MB per 10,000 records
-- **Concurrent Checks**: Up to 100 simultaneous
-
-## Technology Stack
-
-- **Language**: Rust 2021 Edition
-- **TUI Framework**: ratatui/crossterm
-- **Async Runtime**: Tokio
-- **Database**: SQLite with rusqlite
-- **HTTP Client**: reqwest
-- **SSH Library**: ssh2
-- **Cryptography**: ring
+1. Add a variant to `MonitorDetail` in `models.rs` and handle it in `get_connection_target` / `get_connection_type`.
+2. Implement the check in `monitor.rs` and dispatch to it from `check_node`.
+3. Add columns and a migration in `database.rs`, and map them in `add_node`, `update_node`, and the row reader.
+4. Add the form fields in `tui.rs` (`NodeForm`, `MonitorTypeForm`, field rendering and validation).
+5. Update `sample_nodes.json`, the README table, and the tests.

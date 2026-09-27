@@ -6,11 +6,13 @@
 //!
 //! - **Online**: Node is responding. A single check failure transitions to Degraded.
 //! - **Degraded** (soft state): Node failed a check but hasn't yet been confirmed down.
-//!   Retries happen at a shorter `retry_interval`. No status change event is recorded.
+//!   Retries happen at a shorter `retry_interval`.
 //! - **Offline** (hard state): Node has failed `max_check_attempts` consecutive checks.
-//!   A status change event is recorded and persisted.
 //!
 //! Recovery from either Degraded or Offline is immediate on the first successful check.
+//! Every transition between the three states is persisted as a `StatusChange`, along
+//! with the monitoring result that caused it; results for checks that leave the status
+//! unchanged are not stored.
 
 use crate::database::Database;
 use crate::models::{Node, NodeStatus, StatusChange};

@@ -1,97 +1,34 @@
-# Branch Protection Setup for net-monitor
+# Branch protection for `main`
 
-This document outlines the branch protection rules needed to ensure code quality and enable proper changelog generation.
+Repository settings live at https://github.com/casey-mccarthy/net-monitor/settings/branches. This page records what the workflow in `CLAUDE.md` assumes about `main`.
 
-## GitHub Settings Configuration
+## Rules for `main`
 
-Navigate to your repository settings on GitHub: https://github.com/casey-mccarthy/net-monitor/settings/branches
+- **Require a pull request before merging.** Nothing lands on `main` without a PR, including one-line fixes.
+- **Require status checks to pass before merging**, with **require branches to be up to date** on. Require the `CI Success` check: it is the fan-in job in `.github/workflows/ci.yml` and fails if any of format, clippy, tests, coverage, the four platform builds, the security audit, or the dependency check fails.
+- **Require conversation resolution before merging.**
+- **Require linear history.** The project rebases; merge commits are not allowed.
+- **Do not lock the branch and do not block pushes from GitHub Actions.** The release workflow pushes the `chore: bump version to X.Y.Z` commit and the `vX.Y.Z` tag to `main` with the Actions token. If the rules apply to everyone with no bypass for `github-actions[bot]`, releases stop working. Either add the Actions app to the bypass list or leave administrators exempt.
 
-### Main Branch Protection Rules
+## Pull request settings
 
-1. Go to **Settings** → **Branches**
-2. Click **Add rule** or edit existing rule for `main`
-3. Configure the following settings:
+Under **Settings → General → Pull requests**:
 
-#### Required Settings
+- Allow **rebase merging**. Turn off merge commits. Squash merging is fine as a fallback when a PR's commits need cleanup, but the squashed message must still be a conventional commit or the release workflow will not categorise it.
+- **Automatically delete head branches.**
 
-- [x] **Require a pull request before merging**
-  - [x] Require approvals: 1 (or adjust based on team size)
-  - [x] Dismiss stale pull request approvals when new commits are pushed
-  - [x] Require review from CODEOWNERS (optional)
+## Why it matters for releases
 
-- [x] **Require status checks to pass before merging**
-  - [x] Require branches to be up to date before merging
-  - Add required status checks:
-    - `build` (from CI workflow)
-    - `test` (if applicable)
-    - `lint` (if applicable)
+The release notes (`scripts/release-notes.sh`) are built from the commit subjects between two tags. Linear history plus conventional commits is what makes that list readable. A merge commit or a `Fixed stuff` subject shows up in the release notes exactly as written.
 
-- [x] **Require conversation resolution before merging**
-  - Ensures all PR comments are addressed
+## Verifying
 
-- [x] **Include administrators**
-  - Applies these rules even to repository administrators
-  - Ensures consistent workflow for all contributors
+1. A direct push to `main` is rejected.
+2. A PR with a failing check cannot be merged.
+3. After a PR merges, the Release workflow runs, pushes a version bump, and a new release appears with categorised notes.
 
-#### Optional but Recommended
+## Related
 
-- [ ] **Require signed commits**
-  - Adds additional security verification
-
-- [x] **Require linear history**
-  - Prevents merge commits, keeping history clean
-  - Use squash or rebase merging
-
-- [x] **Lock branch**
-  - Prevents force pushes and deletions
-  - Read-only for everyone
-
-- [ ] **Restrict who can push to matching branches**
-  - Limit to specific users or teams if needed
-
-## Pull Request Settings
-
-Navigate to **Settings** → **General** → **Pull Requests**:
-
-1. **Merge button**:
-   - [x] Allow squash merging (recommended for clean history)
-   - [ ] Allow merge commits (optional)
-   - [x] Allow rebase merging (for linear history)
-
-2. **Default commit message**:
-   - Use pull request title and description
-
-3. **Automatically delete head branches**:
-   - [x] Enable to keep repository clean
-
-## Workflow Benefits
-
-With these protections in place:
-
-1. **All changes go through PR review** - No direct pushes to main
-2. **Commit history is preserved** - Each PR's commits contribute to changelog
-3. **Quality gates are enforced** - Tests must pass before merging
-4. **Consistent process** - Same rules apply to everyone
-
-## Verification
-
-After setting up branch protection:
-
-1. Try to push directly to main - should be rejected
-2. Create a test PR - should require review
-3. Check that status checks are required
-4. Verify administrators cannot bypass rules
-
-## Troubleshooting
-
-If you need to make emergency changes:
-1. Create a PR with detailed explanation
-2. Request expedited review
-3. If absolutely necessary, temporarily disable "Include administrators"
-4. Re-enable immediately after emergency fix
-
-## Related Documentation
-
-- See `.github/pull_request_template.md` for PR guidelines
-- See `CONTRIBUTING.md` for development workflow
-- See `.claude/workflows/development-flow.md` for detailed process
+- `CLAUDE.md` for the development workflow
+- `CONTRIBUTING.md` for commit conventions
+- `.github/pull_request_template.md` for what a PR should contain

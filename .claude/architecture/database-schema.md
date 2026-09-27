@@ -1,194 +1,86 @@
-# Database Schema Documentation
+# Database schema
 
-## Overview
+SQLite, one file: `network_monitor.db` in the platform data directory. `Database::new` creates the tables if they are missing and then runs the migrations below, every start, idempotently. There is no schema version table; each migration checks `PRAGMA table_info` for the column it adds.
 
-Net-Monitor uses SQLite for local data persistence. The database is automatically created and migrated as needed.
+## Tables
 
-## Current Schema (Version 3)
+### `nodes`
 
-### Tables
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
+| `name` | TEXT NOT NULL | |
+| `monitor_type` | TEXT NOT NULL | `Http`, `Ping`, or `Tcp` |
+| `status` | TEXT NOT NULL | `Online`, `Degraded`, or `Offline` |
+| `last_check` | TEXT | RFC 3339 UTC |
+| `response_time` | INTEGER | milliseconds, NULL for failed checks |
+| `monitoring_interval` | INTEGER NOT NULL DEFAULT 5 | seconds |
+| `http_url` | TEXT | Http only |
+| `http_expected_status` | INTEGER | Http only |
+| `ping_host` | TEXT | Ping only |
+| `ping_count` | INTEGER | Ping only |
+| `ping_timeout` | INTEGER | Ping only, seconds |
+| `tcp_host` | TEXT | Tcp only |
+| `tcp_port` | INTEGER | Tcp only |
+| `tcp_timeout` | INTEGER | Tcp only, seconds |
+| `display_order` | INTEGER | user-chosen row order |
+| `consecutive_failures` | INTEGER NOT NULL DEFAULT 0 | runtime state for the soft/hard model |
+| `max_check_attempts` | INTEGER NOT NULL DEFAULT 3 | failures before Offline |
+| `retry_interval` | INTEGER NOT NULL DEFAULT 15 | seconds between checks while Degraded |
 
-#### `nodes`
-Stores monitored nodes configuration.
+Only the columns for the node's own `monitor_type` are populated; the rest are NULL.
 
-| Column | Type | Constraints | Description |
-|--------|------|------------|-------------|
-| id | INTEGER | PRIMARY KEY | Unique identifier |
-| name | TEXT | NOT NULL | Display name of the node |
-| connection_type | TEXT | NOT NULL | Type: 'http', 'ping', or 'ssh' |
-| connection_target | TEXT | NOT NULL | URL, IP address, or hostname |
-| monitoring_enabled | BOOLEAN | NOT NULL DEFAULT 0 | Auto-monitoring flag |
-| monitoring_interval | INTEGER | NOT NULL DEFAULT 60 | Check interval in seconds |
-| created_at | TEXT | NOT NULL | ISO 8601 timestamp |
-| updated_at | TEXT | NOT NULL | ISO 8601 timestamp |
+### `monitoring_results`
 
-#### `monitoring_results`
-Stores historical monitoring data.
+One row per status transition, plus the first check of each node after startup. Checks that leave the status unchanged are not stored.
 
-| Column | Type | Constraints | Description |
-|--------|------|------------|-------------|
-| id | INTEGER | PRIMARY KEY | Unique identifier |
-| node_id | INTEGER | NOT NULL, REFERENCES nodes(id) | Associated node |
-| status | TEXT | NOT NULL | 'up', 'down', or 'unknown' |
-| response_time_ms | INTEGER | | Response time in milliseconds |
-| error_message | TEXT | | Error details if check failed |
-| checked_at | TEXT | NOT NULL | ISO 8601 timestamp |
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
+| `node_id` | INTEGER NOT NULL | `REFERENCES nodes(id) ON DELETE CASCADE` |
+| `timestamp` | TEXT NOT NULL | RFC 3339 UTC |
+| `status` | TEXT NOT NULL | `Online` or `Offline` for the individual check |
+| `response_time` | INTEGER | milliseconds, NULL on failure |
+| `details` | TEXT | human-readable outcome or error |
 
-**Indexes:**
-- `idx_monitoring_results_node_id` on (node_id)
-- `idx_monitoring_results_checked_at` on (checked_at)
+### `status_changes`
 
-#### `status_changes`
-Stores node status transition events for analytics and historical tracking.
+One row per transition between Online, Degraded, and Offline.
 
-| Column | Type | Constraints | Description |
-|--------|------|------------|-------------|
-| id | INTEGER | PRIMARY KEY | Unique identifier |
-| node_id | INTEGER | NOT NULL, REFERENCES nodes(id) ON DELETE CASCADE | Associated node |
-| from_status | TEXT | NOT NULL | Previous status ('Online', 'Offline', 'Unknown') |
-| to_status | TEXT | NOT NULL | New status ('Online', 'Offline', 'Unknown') |
-| changed_at | TEXT | NOT NULL | ISO 8601 timestamp of status change |
-| duration_ms | INTEGER | | Time spent in previous status (milliseconds) |
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
+| `node_id` | INTEGER NOT NULL | `REFERENCES nodes(id) ON DELETE CASCADE` |
+| `from_status` | TEXT NOT NULL | |
+| `to_status` | TEXT NOT NULL | |
+| `changed_at` | TEXT NOT NULL | RFC 3339 UTC |
+| `duration_ms` | INTEGER | time spent in `from_status`; NULL for the first record |
 
-**Indexes:**
-- `idx_status_changes_node_id` on (node_id)
-- `idx_status_changes_changed_at` on (changed_at)
+Indexes: `idx_status_changes_node_id`, `idx_status_changes_changed_at`.
 
-**Note:** This table differs from `monitoring_results` by only recording **status transitions** (when status actually changes), not every monitoring check. This enables efficient queries for outage tracking, uptime calculations, and status history analysis.
+## Migrations
 
-#### `migrations`
-Tracks applied database migrations.
+Run in this order on every startup, in `Database::init_tables`:
 
-| Column | Type | Constraints | Description |
-|--------|------|------------|-------------|
-| version | INTEGER | PRIMARY KEY | Migration version number |
-| applied_at | TEXT | NOT NULL | ISO 8601 timestamp |
+1. `migrate_tcp_columns` adds `tcp_host`, `tcp_port`, `tcp_timeout`.
+2. `migrate_unknown_status` rewrites the retired `Unknown` status to `Offline` in all three tables.
+3. `migrate_display_order_column` adds `display_order` and backfills it alphabetically.
+4. `migrate_retry_columns` adds `consecutive_failures`, `max_check_attempts`, `retry_interval`.
 
-## Migration History
+Databases created by old versions may still carry a `credential_id` column and a `credentials` table from the removed credential store. Nothing reads them.
 
-### Version 1 - Initial Schema
-- Created `nodes` table with basic fields
-- Created `monitoring_results` table
-- Established foreign key relationships
+Adding a column: write a `migrate_*` function that checks `PRAGMA table_info`, `ALTER TABLE ... ADD COLUMN` with a default, and call it from `init_tables`. Keep it idempotent.
 
-### Version 2 - Add Credentials (removed)
-- Added `credentials` table and a `credential_id` column on `nodes`
-- The credential store has since been removed. The application no longer
-  reads or writes `credential_id`; the column may still exist in databases
-  created by older versions and is simply ignored.
+## Queries worth knowing
 
-## Data Types Mapping
+All in `database.rs`:
 
-| Rust Type | SQLite Type | Notes |
-|-----------|------------|-------|
-| i32, i64 | INTEGER | Auto-incrementing for PRIMARY KEY |
-| String | TEXT | UTF-8 encoded |
-| bool | BOOLEAN | Stored as 0/1 |
-| Vec<u8> | BLOB | Binary data |
-| DateTime<Utc> | TEXT | ISO 8601 format |
+- `get_all_nodes` orders by `display_order`, then name.
+- `get_latest_monitoring_result(node_id)` backs the latency and last-check columns.
+- `get_status_changes(node_id, limit)` and `get_latest_status_change(node_id)` feed the history view.
+- `get_current_status_duration(node_id)` is the Uptime/Downtime column.
+- `calculate_uptime_percentage(node_id, from, to)` sums `duration_ms` by `from_status` over a window.
 
-## Query Patterns
+## Housekeeping
 
-### Common Queries
-
-```sql
--- Get all nodes with their latest status
-SELECT n.*, mr.status, mr.checked_at
-FROM nodes n
-LEFT JOIN monitoring_results mr ON n.id = mr.node_id
-WHERE mr.id = (
-    SELECT id FROM monitoring_results
-    WHERE node_id = n.id
-    ORDER BY checked_at DESC
-    LIMIT 1
-);
-
--- Get monitoring history for a node
-SELECT * FROM monitoring_results
-WHERE node_id = ?
-ORDER BY checked_at DESC
-LIMIT 100;
-
--- Get nodes needing monitoring
-SELECT * FROM nodes
-WHERE monitoring_enabled = 1
-AND datetime('now') > datetime(
-    (SELECT checked_at FROM monitoring_results
-     WHERE node_id = nodes.id
-     ORDER BY checked_at DESC LIMIT 1),
-    '+' || monitoring_interval || ' seconds'
-);
-
--- Get status change history for a node
-SELECT * FROM status_changes
-WHERE node_id = ?
-ORDER BY changed_at DESC
-LIMIT 50;
-
--- Get latest status change for a node
-SELECT * FROM status_changes
-WHERE node_id = ?
-ORDER BY changed_at DESC
-LIMIT 1;
-
--- Calculate uptime percentage over time period
-SELECT
-    node_id,
-    SUM(CASE WHEN from_status = 'Online' THEN duration_ms ELSE 0 END) as online_ms,
-    SUM(duration_ms) as total_ms,
-    (SUM(CASE WHEN from_status = 'Online' THEN duration_ms ELSE 0 END) * 100.0 / SUM(duration_ms)) as uptime_pct
-FROM status_changes
-WHERE node_id = ?
-    AND changed_at >= ?
-    AND changed_at <= ?
-GROUP BY node_id;
-
--- Get all outages (transitions to Offline)
-SELECT * FROM status_changes
-WHERE node_id = ? AND to_status = 'Offline'
-ORDER BY changed_at DESC;
-
--- Get recovery times (time between Offline and Online)
-SELECT
-    sc1.changed_at as outage_start,
-    sc2.changed_at as recovery_time,
-    (julianday(sc2.changed_at) - julianday(sc1.changed_at)) * 86400000 as downtime_ms
-FROM status_changes sc1
-JOIN status_changes sc2 ON sc1.node_id = sc2.node_id
-WHERE sc1.to_status = 'Offline'
-    AND sc2.from_status = 'Offline'
-    AND sc2.to_status = 'Online'
-    AND sc2.changed_at > sc1.changed_at
-ORDER BY sc1.changed_at DESC;
-```
-
-## Database Maintenance
-
-### Size Management
-- Old monitoring results are automatically pruned after 30 days
-- Indexes are automatically maintained by SQLite
-- VACUUM is run monthly to reclaim space
-
-### Backup Strategy
-- Database file can be directly copied for backup
-- Export functionality creates JSON backups
-- Consider periodic automated backups
-
-### Performance Optimization
-- Indexes on frequently queried columns
-- Prepared statements for repeated queries
-- Connection pooling for concurrent access
-
-## Future Considerations
-
-### Potential Schema Changes
-- Add `tags` table for node categorization
-- Add `alerts` table for notification history
-- Add `users` table for multi-user support
-- Consider partitioning monitoring_results by date
-
-### Migration Strategy
-- All changes via numbered migrations
-- Backward compatibility maintained
-- Automatic migration on startup
-- Rollback capability for safety
+There is no automatic pruning or VACUUM. Both history tables grow with status transitions, not with checks, so a stable network produces very little data. Deleting a node cascades to its results and status changes.

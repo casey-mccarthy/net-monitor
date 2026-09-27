@@ -2,89 +2,31 @@
 description: Trigger a new release with automated changelog generation and version bumping
 ---
 
-I'll help you create a new release with proper versioning and comprehensive changelog generation.
+Releases are automatic. Nothing is tagged or bumped by hand; this command checks that a release will happen and shows what it will say.
 
-## What I'll do:
+## How a release happens
 
-1. **Pre-release checks**
-   - Ensure we're on main branch
-   - Verify all tests pass
-   - Check for uncommitted changes
-   - Review recent merged PRs
+Merging a pull request to `main` runs CI, and when CI passes `.github/workflows/release.yml`:
 
-2. **Determine version bump**
-   - Analyze commits since last release
-   - Determine semantic version bump:
-     - MAJOR: Breaking changes (BREAKING CHANGE in commit)
-     - MINOR: New features (feat: commits)
-     - PATCH: Bug fixes (fix: commits)
+1. Looks at the commits since the last tag and picks the bump: `BREAKING CHANGE` or `!` → major, `feat` → minor, anything else conventional → patch. No conventional commits → no release.
+2. Commits `chore: bump version to X.Y.Z` to `Cargo.toml` on `main` and tags it `vX.Y.Z`.
+3. Builds archives for Linux x64, macOS x64, macOS ARM64, and Windows x64, plus `checksums.txt`.
+4. Publishes a GitHub release whose notes come from `scripts/release-notes.sh`: the commits since the previous tag grouped into Breaking Changes, Features, Bug Fixes, Performance, Documentation, and Other Changes, followed by the download table and a compare link.
 
-3. **Generate comprehensive changelog**
-   - Aggregate all commits since last release
-   - Group by PR if applicable
-   - Organize by type:
-     - Breaking Changes
-     - Features
-     - Bug Fixes
-     - Performance Improvements
-     - Documentation
-     - Other Changes
+## What I'll do
 
-4. **Create release**
-   - Update version in Cargo.toml
-   - Generate release notes
-   - Create git tag
-   - Push to trigger release workflow
+1. Confirm the working tree is clean and `main` is up to date.
+2. List the commits since the last tag and state which bump they will produce.
+3. Preview the release notes:
 
-## Changelog Format:
+   ```bash
+   NEXT=<computed version>
+   LAST=$(git describe --tags --abbrev=0)
+   scripts/release-notes.sh "$NEXT" "$LAST"
+   ```
 
-```markdown
-# Release v0.3.0
+4. Point out any commit that will read badly in the notes (non-conventional subject, wrong type) so it can be fixed before it merges.
 
-## Breaking Changes
-- BREAKING: Changed API authentication method
+## Forcing a specific bump
 
-## Features
-- feat: Add SSH connection support (#45)
-- feat: Implement credential storage system
-
-## Bug Fixes
-- fix: Resolve memory leak in monitoring loop
-- fix: Correct timezone handling
-
-## Performance
-- perf: Optimize database queries
-
-## Documentation
-- docs: Update installation guide
-```
-
-## Version Determination:
-
-The version bump is automatic based on commits:
-- Any BREAKING CHANGE → Major version
-- Any feat: commits → Minor version
-- Only fix: commits → Patch version
-
-## Release Process:
-
-1. Merge all PRs intended for release
-2. Switch to main branch
-3. Run this command
-4. Review generated changelog
-5. Confirm release creation
-6. GitHub Actions will build and publish
-
-## Usage:
-
-Just say:
-- "Create a new release"
-- "Trigger a release"
-- "Release the current version"
-
-## Manual Override:
-
-If you need to force a specific version:
-- "Create a major release" (x.0.0)
-- "Create a minor release" (0.x.0)
-- "Create a patch release" (0.0.x)
+Change the commits, not the workflow. A `feat:` commit forces a minor bump; a `!` after the type or a `BREAKING CHANGE:` footer forces a major bump. If a release must be re-run, re-run the failed Release workflow from the Actions tab; do not push tags by hand.
