@@ -293,6 +293,7 @@ async fn test_check_node_invalid_url() {
 // private functions. Their functionality is tested through check_node tests.
 
 #[test]
+#[cfg(feature = "network-tests")]
 fn test_monitoring_result_structure() {
     let node = create_test_http_node();
     let result = tokio::runtime::Runtime::new()
