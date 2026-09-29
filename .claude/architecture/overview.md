@@ -28,7 +28,7 @@ Net Monitor is a single binary with four parts. The TUI owns the screen, the mon
 Renders every view with ratatui and handles all input. Owns the in-memory list of nodes and the `TableState`. Talks to the engine through a `MonitoringHandle` (start, stop, send config updates) and receives status updates over a channel. Import/export, node forms, reorder mode, history, and the about/help overlays all live here. The terminal is restored on panic and around native file dialogs.
 
 ### `monitoring_engine.rs`
-`start_monitoring` spawns one background thread that owns a tokio runtime and loops over the nodes. Each pass drains `NodeConfigUpdate` messages from the TUI (add, update, delete), then checks every node that is due: `check_node`, `evaluate_node_status`, persist runtime state, and send the updated node back over a channel. Checks run one after another, not concurrently, so a slow HTTP timeout delays the nodes behind it. Per-node state (previous status, time of the last transition) is seeded from the database on startup so a restart records no duplicate transitions.
+`start_monitoring` spawns one background thread that owns a tokio runtime and ticks every 250 ms. Each tick drains `NodeConfigUpdate` messages from the TUI (add, update, delete), applies the results of checks that have finished (`evaluate_node_status`, persist runtime state, send the updated node back over a channel), then launches a tokio task running `check_node` for every node that is due. Checks run concurrently, so a slow HTTP timeout never delays the nodes behind it, and a node is never checked twice at once. All per-node state and every database write stay on the engine thread; the tasks only report a result over a channel. Per-node state (previous status, time of the last transition) is seeded from the database on startup so a restart records no duplicate transitions.
 
 The state model:
 
@@ -52,7 +52,7 @@ What Enter does. HTTP nodes open in the default browser via the `open` crate. Pi
 
 ## Concurrency
 
-Two threads. The main thread renders the TUI and polls for input; the engine thread runs the monitoring loop with its own tokio runtime and blocks on each check. They talk over `std::sync::mpsc` channels: config updates and stop signals go in, updated nodes come out. Both open their own SQLite connections per call.
+Two long-lived threads plus a task per in-flight check. The main thread renders the TUI and polls for input; the engine thread runs the monitoring loop and owns a multi-threaded tokio runtime on which every check runs as its own task. HTTP and TCP checks are fully async; ping uses the blocking `ping` crate, so it runs on tokio's blocking pool. The TUI and the engine talk over `std::sync::mpsc` channels: config updates and stop signals go in, updated nodes come out. Check tasks report back to the engine thread over another channel and never touch the database or the node list themselves. Both threads open their own SQLite connections per call.
 
 ## Data
 

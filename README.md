@@ -8,6 +8,7 @@ A terminal-based network monitor written in Rust. It watches HTTP endpoints, TCP
 - **TCP** — open a connection to a host and port within a timeout.
 - **Ping** — ICMP echo with a configurable count and timeout. Accepts hostnames as well as IP addresses, and works without root on Linux and macOS.
 - **Soft/hard state model** — one failed check marks a node *Degraded*; only consecutive failures mark it *Offline*. Fewer false alarms.
+- **Concurrent checks** — every node is checked on its own schedule, in parallel. A host that times out never delays the others.
 - **Status history** — every status transition is stored with how long the previous state lasted, so the history view shows uptime and outage lengths.
 - **Connect** — press Enter on a node to open it: HTTP nodes open in your browser, ping and TCP nodes open an SSH session in a new terminal window.
 - **Import/Export** — node configuration as JSON.

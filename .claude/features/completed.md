@@ -9,6 +9,7 @@ What the app does today, roughly in the order it arrived. Release-by-release det
 - Soft/hard state model: Degraded after one failure, Offline after `max_check_attempts`, faster `retry_interval` while Degraded
 - Per-node monitoring interval, editable while monitoring runs
 - Failed checks report no latency
+- Checks run concurrently as tokio tasks; a slow node never holds up the rest
 
 ## History
 - Status change log for every transition, with the duration of the previous state
