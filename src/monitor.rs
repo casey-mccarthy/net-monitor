@@ -2,8 +2,9 @@ use crate::models::{MonitorDetail, MonitoringResult, Node, NodeStatus};
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use std::io::ErrorKind;
-use std::net::{IpAddr, TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Duration;
+use tokio::net::TcpStream;
 use tracing::{info, warn};
 
 pub async fn check_node(node: &Node) -> Result<MonitoringResult> {
@@ -147,8 +148,17 @@ fn send_ping(addr: IpAddr, timeout: Duration) -> std::result::Result<Duration, p
     }
 }
 
+/// The `ping` crate blocks while it waits for a reply, so the whole check runs
+/// on tokio's blocking pool and leaves the async workers free for other nodes.
 async fn check_ping(host: &str, count: u32, timeout: u64) -> Result<String> {
     info!("Checking Ping for {}", host);
+    let host = host.to_string();
+    tokio::task::spawn_blocking(move || check_ping_blocking(&host, count, timeout))
+        .await
+        .context("Ping task was cancelled")?
+}
+
+fn check_ping_blocking(host: &str, count: u32, timeout: u64) -> Result<String> {
     let addr = resolve_ping_host(host)?;
 
     // A zero timeout would fail every attempt; a zero count would never try.
@@ -189,10 +199,10 @@ async fn check_ping(host: &str, count: u32, timeout: u64) -> Result<String> {
 async fn check_tcp(host: &str, port: u16, timeout: u64) -> Result<String> {
     info!("Checking TCP connection to {}:{}", host, port);
 
-    // Format the address and resolve DNS
+    // Resolve DNS off the async workers
     let addr_str = format!("{}:{}", host, port);
-    let socket_addrs: Vec<_> = addr_str
-        .to_socket_addrs()
+    let socket_addrs: Vec<_> = tokio::net::lookup_host(&addr_str)
+        .await
         .context(format!("Failed to resolve hostname: {}", host))?
         .collect();
 
@@ -205,16 +215,18 @@ async fn check_tcp(host: &str, port: u16, timeout: u64) -> Result<String> {
     let mut last_error = None;
 
     for socket_addr in socket_addrs {
-        match TcpStream::connect_timeout(&socket_addr, timeout_duration) {
-            Ok(_stream) => {
+        match tokio::time::timeout(timeout_duration, TcpStream::connect(socket_addr)).await {
+            Ok(Ok(_stream)) => {
                 return Ok(format!(
                     "TCP connection successful to {}:{} ({})",
                     host, port, socket_addr
                 ));
             }
-            Err(e) => {
-                last_error = Some(e);
-                continue;
+            Ok(Err(e)) => {
+                last_error = Some(e.to_string());
+            }
+            Err(_elapsed) => {
+                last_error = Some(format!("timed out after {}s", timeout));
             }
         }
     }

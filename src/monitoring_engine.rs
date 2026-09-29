@@ -13,16 +13,25 @@
 //! Every transition between the three states is persisted as a `StatusChange`, along
 //! with the monitoring result that caused it; results for checks that leave the status
 //! unchanged are not stored.
+//!
+//! One background thread owns the loop and all per-node state. Checks themselves do
+//! not run on that thread: each due node is handed to a tokio task, so a slow or
+//! timing-out check never delays the nodes behind it, and the loop keeps applying
+//! config updates and finished results while checks are in flight. A node is never
+//! checked twice at once.
 
 use crate::database::Database;
-use crate::models::{Node, NodeStatus, StatusChange};
+use crate::models::{MonitoringResult, Node, NodeStatus, StatusChange};
 use crate::monitor::check_node;
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tracing::info;
+
+/// How often the loop wakes up to launch due checks and apply finished ones.
+const TICK: Duration = Duration::from_millis(250);
 
 /// Commands sent to the monitoring thread to update its node configuration.
 #[derive(Clone)]
@@ -59,6 +68,11 @@ pub fn start_monitoring(
 }
 
 /// The main monitoring loop that runs in a background thread.
+///
+/// Every tick it drains config updates, applies the results of checks that
+/// have finished, and launches a check for every node that is due. Checks run
+/// concurrently as tokio tasks and report back over a channel; only this thread
+/// touches the node list, the per-node state, and the database.
 fn run_monitoring_loop(
     db: Database,
     initial_nodes: Vec<Node>,
@@ -85,9 +99,10 @@ fn run_monitoring_loop(
 
     let mut current_nodes = initial_nodes;
     let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (result_tx, result_rx) = mpsc::channel::<(i64, anyhow::Result<MonitoringResult>)>();
+    let mut in_flight: HashSet<i64> = HashSet::new();
 
     loop {
-        // Process configuration updates
         process_config_updates(
             &config_rx,
             &db,
@@ -97,84 +112,108 @@ fn run_monitoring_loop(
             &mut last_status_change_times,
         );
 
-        // Check each node
-        for node in &mut current_nodes {
-            let node_id = node.id.unwrap_or(0);
-            if node_id == 0 {
+        // Apply every check that finished since the last tick.
+        while let Ok((node_id, result)) = result_rx.try_recv() {
+            in_flight.remove(&node_id);
+            let Ok(check_result) = result else { continue };
+            // The node may have been deleted while its check was in flight.
+            let Some(node) = current_nodes.iter_mut().find(|n| n.id == Some(node_id)) else {
                 continue;
+            };
+            apply_check_result(
+                &db,
+                node,
+                check_result,
+                &mut previous_statuses,
+                &mut last_status_change_times,
+            );
+            if update_tx.send(node.clone()).is_err() {
+                runtime.shutdown_background();
+                return;
             }
+        }
 
-            if !should_check_node(node, node_id, &last_check_times) {
+        // Launch a check for every node that is due and not already being checked.
+        for node in &current_nodes {
+            let Some(node_id) = node.id else { continue };
+            if in_flight.contains(&node_id) || !should_check_node(node, node_id, &last_check_times)
+            {
                 continue;
             }
 
             last_check_times.insert(node_id, Instant::now());
-            let previous_status = previous_statuses.get(&node_id).copied();
-            let result = runtime.block_on(check_node(node));
-
-            if let Ok(mut check_result) = result {
-                let check_succeeded = check_result.status == NodeStatus::Online;
-
-                // Apply soft/hard state logic
-                let new_status = evaluate_node_status(node, check_succeeded);
-
-                check_result.status = new_status;
-
-                // Record status change events (only for confirmed transitions)
-                if let Some(prev_status) = previous_status {
-                    if should_record_status_change(prev_status, new_status) {
-                        let current_time = Utc::now();
-                        let duration_ms =
-                            last_status_change_times.get(&node_id).map(|last_change| {
-                                StatusChange::calculate_duration(*last_change, current_time)
-                            });
-
-                        let status_change = StatusChange {
-                            id: None,
-                            node_id,
-                            from_status: prev_status,
-                            to_status: new_status,
-                            changed_at: current_time,
-                            duration_ms,
-                        };
-
-                        let _ = db.add_status_change(&status_change);
-                        last_status_change_times.insert(node_id, current_time);
-                    }
-                }
-
-                previous_statuses.insert(node_id, new_status);
-                node.status = new_status;
-                node.last_check = Some(check_result.timestamp);
-                node.response_time = check_result.response_time;
-                check_result.node_id = node_id;
-
-                // Persist only runtime state: the user may have edited this node's
-                // configuration while the check was in flight, and writing our copy
-                // back would clobber that edit in the database.
-                let _ = db.update_node_runtime_state(node);
-
-                // Record monitoring result on confirmed status changes or first check
-                if let Some(prev_status) = previous_status {
-                    if should_record_status_change(prev_status, new_status) {
-                        let _ = db.add_monitoring_result(&check_result);
-                    }
-                } else {
-                    // First check ever for this node
-                    let _ = db.add_monitoring_result(&check_result);
-                }
-
-                if update_tx.send(node.clone()).is_err() {
-                    break;
-                }
-            }
+            in_flight.insert(node_id);
+            let node = node.clone();
+            let result_tx = result_tx.clone();
+            runtime.spawn(async move {
+                let result = check_node(&node).await;
+                let _ = result_tx.send((node_id, result));
+            });
         }
 
-        // Check for stop signal with 1-second timeout
-        match stop_rx.recv_timeout(Duration::from_secs(1)) {
+        match stop_rx.recv_timeout(TICK) {
             Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
+    }
+
+    // Don't wait for in-flight checks (a ping can take count × timeout seconds).
+    runtime.shutdown_background();
+}
+
+/// Folds a finished check into the node: runs the soft/hard state machine,
+/// records the transition and its result when the status changed (or on the
+/// node's first check ever), and persists the node's runtime state.
+fn apply_check_result(
+    db: &Database,
+    node: &mut Node,
+    mut check_result: MonitoringResult,
+    previous_statuses: &mut HashMap<i64, NodeStatus>,
+    last_status_change_times: &mut HashMap<i64, DateTime<Utc>>,
+) {
+    let node_id = node.id.unwrap_or(0);
+    let previous_status = previous_statuses.get(&node_id).copied();
+    let check_succeeded = check_result.status == NodeStatus::Online;
+
+    let new_status = evaluate_node_status(node, check_succeeded);
+    check_result.status = new_status;
+    check_result.node_id = node_id;
+
+    let status_changed =
+        previous_status.is_some_and(|prev| should_record_status_change(prev, new_status));
+
+    if let (Some(prev_status), true) = (previous_status, status_changed) {
+        let current_time = Utc::now();
+        let duration_ms = last_status_change_times
+            .get(&node_id)
+            .map(|last_change| StatusChange::calculate_duration(*last_change, current_time));
+
+        let status_change = StatusChange {
+            id: None,
+            node_id,
+            from_status: prev_status,
+            to_status: new_status,
+            changed_at: current_time,
+            duration_ms,
+        };
+
+        let _ = db.add_status_change(&status_change);
+        last_status_change_times.insert(node_id, current_time);
+    }
+
+    previous_statuses.insert(node_id, new_status);
+    node.status = new_status;
+    node.last_check = Some(check_result.timestamp);
+    node.response_time = check_result.response_time;
+
+    // Persist only runtime state: the user may have edited this node's
+    // configuration while the check was in flight, and writing our copy
+    // back would clobber that edit in the database.
+    let _ = db.update_node_runtime_state(node);
+
+    // Record the monitoring result on confirmed status changes or the first check ever.
+    if status_changed || previous_status.is_none() {
+        let _ = db.add_monitoring_result(&check_result);
     }
 }
 
@@ -365,6 +404,188 @@ mod tests {
         assert_eq!(
             last_change.map(|t| t.timestamp_millis()),
             Some(changed_at.timestamp_millis())
+        );
+    }
+
+    fn make_result(status: NodeStatus) -> MonitoringResult {
+        MonitoringResult {
+            id: None,
+            node_id: 0,
+            timestamp: Utc::now(),
+            status,
+            response_time: (status == NodeStatus::Online).then_some(12),
+            details: Some("test".to_string()),
+        }
+    }
+
+    // -- apply_check_result tests --
+
+    #[test]
+    fn test_apply_first_check_records_result_but_no_transition() {
+        let (_dir, db) = temp_db();
+        let mut node = make_node(NodeStatus::Online, 0, 3);
+        let node_id = db.add_node(&node).unwrap();
+        node.id = Some(node_id);
+        let mut previous_statuses = HashMap::new();
+        let mut last_changes = HashMap::new();
+
+        apply_check_result(
+            &db,
+            &mut node,
+            make_result(NodeStatus::Online),
+            &mut previous_statuses,
+            &mut last_changes,
+        );
+
+        assert_eq!(node.status, NodeStatus::Online);
+        assert_eq!(node.response_time, Some(12));
+        assert!(node.last_check.is_some());
+        assert_eq!(previous_statuses.get(&node_id), Some(&NodeStatus::Online));
+        let stored = db.get_latest_monitoring_result(node_id).unwrap().unwrap();
+        assert_eq!(stored.node_id, node_id);
+        assert!(db.get_latest_status_change(node_id).unwrap().is_none());
+        assert_eq!(
+            db.get_all_nodes().unwrap()[0].status,
+            NodeStatus::Online,
+            "runtime state is persisted"
+        );
+    }
+
+    #[test]
+    fn test_apply_transition_records_change_with_duration() {
+        let (_dir, db) = temp_db();
+        let mut node = make_node(NodeStatus::Online, 0, 3);
+        let node_id = db.add_node(&node).unwrap();
+        node.id = Some(node_id);
+        let mut previous_statuses = HashMap::from([(node_id, NodeStatus::Online)]);
+        let mut last_changes =
+            HashMap::from([(node_id, Utc::now() - chrono::Duration::seconds(30))]);
+
+        apply_check_result(
+            &db,
+            &mut node,
+            make_result(NodeStatus::Offline),
+            &mut previous_statuses,
+            &mut last_changes,
+        );
+
+        assert_eq!(node.status, NodeStatus::Degraded);
+        assert_eq!(node.consecutive_failures, 1);
+        assert_eq!(node.response_time, None);
+        let change = db.get_latest_status_change(node_id).unwrap().unwrap();
+        assert_eq!(change.from_status, NodeStatus::Online);
+        assert_eq!(change.to_status, NodeStatus::Degraded);
+        assert!(change.duration_ms.unwrap() >= 29_000);
+        assert_eq!(
+            db.get_latest_monitoring_result(node_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            NodeStatus::Degraded,
+            "the stored result carries the evaluated status, not the raw check"
+        );
+        assert!(last_changes[&node_id] > Utc::now() - chrono::Duration::seconds(5));
+    }
+
+    #[test]
+    fn test_apply_unchanged_status_stores_nothing() {
+        let (_dir, db) = temp_db();
+        let mut node = make_node(NodeStatus::Online, 0, 3);
+        let node_id = db.add_node(&node).unwrap();
+        node.id = Some(node_id);
+        let mut previous_statuses = HashMap::from([(node_id, NodeStatus::Online)]);
+        let mut last_changes = HashMap::new();
+
+        apply_check_result(
+            &db,
+            &mut node,
+            make_result(NodeStatus::Online),
+            &mut previous_statuses,
+            &mut last_changes,
+        );
+
+        assert!(db.get_latest_monitoring_result(node_id).unwrap().is_none());
+        assert!(db.get_latest_status_change(node_id).unwrap().is_none());
+        assert!(node.last_check.is_some(), "runtime state still updates");
+    }
+
+    // -- end-to-end: checks run concurrently --
+
+    /// A local HTTP server that holds every request for `delay` before answering 200.
+    fn slow_http_server(delay: Duration) -> u16 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                thread::spawn(move || {
+                    let mut stream = stream;
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    thread::sleep(delay);
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                });
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn test_engine_checks_nodes_concurrently() {
+        let (_dir, db) = temp_db();
+        let delay = Duration::from_millis(1500);
+        let port = slow_http_server(delay);
+
+        let node_count = 4;
+        let mut nodes = Vec::new();
+        for i in 0..node_count {
+            let mut node = make_node(NodeStatus::Offline, 0, 3);
+            node.name = format!("slow {}", i);
+            node.detail = MonitorDetail::Http {
+                url: format!("http://127.0.0.1:{}/", port),
+                expected_status: 200,
+            };
+            node.id = Some(db.add_node(&node).unwrap());
+            nodes.push(node);
+        }
+
+        let (update_tx, update_rx) = mpsc::channel();
+        let started = Instant::now();
+        let handle = start_monitoring(db, nodes, update_tx);
+
+        // Sequential checks would need node_count × delay; concurrent ones
+        // finish in about one delay plus a tick. Leave generous slack for CI.
+        let deadline = delay * 2 + Duration::from_secs(1);
+        let mut updated = Vec::new();
+        while updated.len() < node_count {
+            let remaining = deadline.saturating_sub(started.elapsed());
+            let node = update_rx.recv_timeout(remaining).unwrap_or_else(|_| {
+                panic!(
+                    "only {} of {} nodes were checked within {:?}: the checks did not overlap",
+                    updated.len(),
+                    node_count,
+                    deadline
+                )
+            });
+            assert_eq!(node.status, NodeStatus::Online, "{}", node.name);
+            updated.push(node);
+        }
+
+        let _ = handle.stop_tx.send(());
+    }
+
+    #[test]
+    fn test_engine_stops_on_request() {
+        let (_dir, db) = temp_db();
+        let (update_tx, update_rx) = mpsc::channel();
+        let handle = start_monitoring(db, Vec::new(), update_tx);
+        handle.stop_tx.send(()).unwrap();
+        // The engine drops its update sender when it exits.
+        assert_eq!(
+            update_rx.recv_timeout(Duration::from_secs(5)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
         );
     }
 
