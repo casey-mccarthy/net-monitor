@@ -395,6 +395,7 @@ fn test_add_status_change() {
         to_status: NodeStatus::Online,
         changed_at: Utc::now(),
         duration_ms: None,
+        last_success_at: None,
     };
 
     let change_id = test_db.db.add_status_change(&status_change).unwrap();
@@ -417,6 +418,7 @@ fn test_get_status_changes() {
             to_status: NodeStatus::Online,
             changed_at: now - Duration::seconds(300),
             duration_ms: None,
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -425,6 +427,7 @@ fn test_get_status_changes() {
             to_status: NodeStatus::Offline,
             changed_at: now - Duration::seconds(200),
             duration_ms: Some(100000),
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -433,6 +436,7 @@ fn test_get_status_changes() {
             to_status: NodeStatus::Online,
             changed_at: now - Duration::seconds(100),
             duration_ms: Some(100000),
+            last_success_at: None,
         },
     ];
 
@@ -473,6 +477,7 @@ fn test_get_latest_status_change() {
         to_status: NodeStatus::Online,
         changed_at: now,
         duration_ms: None,
+        last_success_at: None,
     };
     test_db.db.add_status_change(&status_change).unwrap();
 
@@ -490,6 +495,7 @@ fn test_get_latest_status_change() {
         to_status: NodeStatus::Offline,
         changed_at: now + Duration::seconds(60),
         duration_ms: Some(60000),
+        last_success_at: None,
     };
     test_db.db.add_status_change(&second_change).unwrap();
 
@@ -507,7 +513,28 @@ fn test_get_current_status_duration() {
 
     // No status changes yet
     let duration = test_db.db.get_current_status_duration(node_id).unwrap();
-    assert!(duration.is_none());
+    assert!(duration.is_none(), "never checked, so no duration");
+
+    // A node that has been checked but never changed status has been in its
+    // status since that first check.
+    let first_check = Utc::now() - Duration::seconds(20);
+    test_db
+        .db
+        .add_monitoring_result(&MonitoringResult {
+            id: None,
+            node_id,
+            timestamp: first_check,
+            status: NodeStatus::Online,
+            response_time: Some(1),
+            details: None,
+        })
+        .unwrap();
+    let since_first_check = test_db
+        .db
+        .get_current_status_duration(node_id)
+        .unwrap()
+        .unwrap();
+    assert!((19_000..=22_000).contains(&since_first_check));
 
     // Add a status change 5 seconds ago
     let changed_at = Utc::now() - Duration::seconds(5);
@@ -518,6 +545,7 @@ fn test_get_current_status_duration() {
         to_status: NodeStatus::Online,
         changed_at,
         duration_ms: None,
+        last_success_at: None,
     };
     test_db.db.add_status_change(&status_change).unwrap();
 
@@ -555,6 +583,7 @@ fn test_calculate_uptime_percentage() {
             to_status: NodeStatus::Online,
             changed_at: start_time,
             duration_ms: None,
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -563,6 +592,7 @@ fn test_calculate_uptime_percentage() {
             to_status: NodeStatus::Offline,
             changed_at: start_time + Duration::seconds(400),
             duration_ms: Some(400000),
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -571,6 +601,7 @@ fn test_calculate_uptime_percentage() {
             to_status: NodeStatus::Online,
             changed_at: start_time + Duration::seconds(700),
             duration_ms: Some(300000),
+            last_success_at: None,
         },
     ];
 
@@ -610,6 +641,7 @@ fn test_uptime_with_offline_period_starting_before_window() {
             to_status: NodeStatus::Online,
             changed_at: base_time,
             duration_ms: None,
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -618,6 +650,7 @@ fn test_uptime_with_offline_period_starting_before_window() {
             to_status: NodeStatus::Offline,
             changed_at: base_time + Duration::seconds(200),
             duration_ms: Some(200000),
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -626,6 +659,7 @@ fn test_uptime_with_offline_period_starting_before_window() {
             to_status: NodeStatus::Online,
             changed_at: base_time + Duration::seconds(800),
             duration_ms: Some(600000),
+            last_success_at: None,
         },
     ];
 
@@ -671,6 +705,7 @@ fn test_uptime_with_node_offline_at_window_start() {
             to_status: NodeStatus::Offline,
             changed_at: base_time,
             duration_ms: Some(100000),
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -679,6 +714,7 @@ fn test_uptime_with_node_offline_at_window_start() {
             to_status: NodeStatus::Online,
             changed_at: base_time + Duration::seconds(700),
             duration_ms: Some(700000),
+            last_success_at: None,
         },
     ];
 
@@ -724,6 +760,7 @@ fn test_uptime_with_node_offline_past_window_end() {
             to_status: NodeStatus::Offline,
             changed_at: base_time + Duration::seconds(300),
             duration_ms: Some(300000),
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -732,6 +769,7 @@ fn test_uptime_with_node_offline_past_window_end() {
             to_status: NodeStatus::Online,
             changed_at: base_time + Duration::seconds(1500),
             duration_ms: Some(1200000),
+            last_success_at: None,
         },
     ];
 
@@ -782,6 +820,7 @@ fn test_uptime_with_multiple_transitions_across_boundaries() {
             to_status: NodeStatus::Offline,
             changed_at: base_time,
             duration_ms: None,
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -790,6 +829,7 @@ fn test_uptime_with_multiple_transitions_across_boundaries() {
             to_status: NodeStatus::Online,
             changed_at: base_time + Duration::seconds(100),
             duration_ms: Some(100000),
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -798,6 +838,7 @@ fn test_uptime_with_multiple_transitions_across_boundaries() {
             to_status: NodeStatus::Offline,
             changed_at: base_time + Duration::seconds(200),
             duration_ms: Some(100000),
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -806,6 +847,7 @@ fn test_uptime_with_multiple_transitions_across_boundaries() {
             to_status: NodeStatus::Online,
             changed_at: base_time + Duration::seconds(600),
             duration_ms: Some(400000),
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -814,6 +856,7 @@ fn test_uptime_with_multiple_transitions_across_boundaries() {
             to_status: NodeStatus::Offline,
             changed_at: base_time + Duration::seconds(800),
             duration_ms: Some(200000),
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -822,6 +865,7 @@ fn test_uptime_with_multiple_transitions_across_boundaries() {
             to_status: NodeStatus::Online,
             changed_at: base_time + Duration::seconds(1000),
             duration_ms: Some(200000),
+            last_success_at: None,
         },
         StatusChange {
             id: None,
@@ -830,6 +874,7 @@ fn test_uptime_with_multiple_transitions_across_boundaries() {
             to_status: NodeStatus::Offline,
             changed_at: base_time + Duration::seconds(1800),
             duration_ms: Some(800000),
+            last_success_at: None,
         },
     ];
 
@@ -901,6 +946,7 @@ fn test_uptime_no_status_changes_before_window() {
         to_status: NodeStatus::Offline,
         changed_at: base_time + Duration::seconds(500),
         duration_ms: Some(500000),
+        last_success_at: None,
     };
 
     test_db.db.add_status_change(&change).unwrap();
@@ -936,6 +982,7 @@ fn test_status_change_with_duration() {
         to_status: NodeStatus::Offline,
         changed_at: Utc::now(),
         duration_ms: Some(120000), // 2 minutes
+        last_success_at: None,
     };
 
     test_db.db.add_status_change(&status_change).unwrap();
@@ -955,6 +1002,7 @@ fn test_status_change_helper_methods() {
         to_status: NodeStatus::Offline,
         changed_at: Utc::now(),
         duration_ms: None,
+        last_success_at: None,
     };
     assert!(degradation.is_degradation());
     assert!(!degradation.is_recovery());
@@ -967,6 +1015,7 @@ fn test_status_change_helper_methods() {
         to_status: NodeStatus::Online,
         changed_at: Utc::now(),
         duration_ms: None,
+        last_success_at: None,
     };
     assert!(recovery.is_recovery());
     assert!(!recovery.is_degradation());
@@ -999,6 +1048,7 @@ fn test_status_changes_cascade_delete() {
         to_status: NodeStatus::Online,
         changed_at: Utc::now(),
         duration_ms: None,
+        last_success_at: None,
     };
     test_db.db.add_status_change(&status_change).unwrap();
 
@@ -1236,4 +1286,315 @@ fn test_degraded_state_survives_reopen() {
     // failure counter would restart confirmation from zero.
     assert_eq!(reopened.status, NodeStatus::Degraded);
     assert_eq!(reopened.consecutive_failures, 2);
+}
+
+// ========== Status change last success ==========
+
+#[test]
+fn test_status_change_round_trips_last_success_at() {
+    let test_db = TestDatabase::new();
+    let node_id = test_db
+        .db
+        .add_node(&fixtures::unit_test_http_node())
+        .unwrap();
+    let last_success = Utc::now() - Duration::minutes(5);
+
+    test_db
+        .db
+        .add_status_change(&StatusChange {
+            id: None,
+            node_id,
+            from_status: NodeStatus::Online,
+            to_status: NodeStatus::Degraded,
+            changed_at: Utc::now(),
+            duration_ms: Some(1000),
+            last_success_at: Some(last_success),
+        })
+        .unwrap();
+
+    let stored = test_db
+        .db
+        .get_latest_status_change(node_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.last_success_at.map(|t| t.timestamp_millis()),
+        Some(last_success.timestamp_millis())
+    );
+}
+
+#[test]
+fn test_get_status_changes_ascending_is_oldest_first() {
+    let test_db = TestDatabase::new();
+    let node_id = test_db
+        .db
+        .add_node(&fixtures::unit_test_http_node())
+        .unwrap();
+    let now = Utc::now();
+    for (offset, to_status) in [(300, NodeStatus::Offline), (200, NodeStatus::Online)] {
+        test_db
+            .db
+            .add_status_change(&StatusChange {
+                id: None,
+                node_id,
+                from_status: NodeStatus::Online,
+                to_status,
+                changed_at: now - Duration::seconds(offset),
+                duration_ms: None,
+                last_success_at: None,
+            })
+            .unwrap();
+    }
+
+    let changes = test_db.db.get_status_changes_ascending(node_id).unwrap();
+    assert_eq!(changes.len(), 2);
+    assert_eq!(changes[0].to_status, NodeStatus::Offline);
+    assert_eq!(changes[1].to_status, NodeStatus::Online);
+    assert!(changes[0].changed_at < changes[1].changed_at);
+}
+
+#[test]
+fn test_last_success_at_is_added_to_an_old_database() {
+    let test_db = TestDatabase::new();
+    let path = test_db.path().to_path_buf();
+
+    // Recreate the schema the previous release used.
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "DROP TABLE status_changes;
+             CREATE TABLE status_changes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id INTEGER NOT NULL,
+                from_status TEXT NOT NULL,
+                to_status TEXT NOT NULL,
+                changed_at TEXT NOT NULL,
+                duration_ms INTEGER
+             );
+             INSERT INTO status_changes (node_id, from_status, to_status, changed_at, duration_ms)
+             VALUES (1, 'Online', 'Offline', '2026-01-01T00:00:00+00:00', 5000);",
+        )
+        .unwrap();
+    }
+
+    let db = net_monitor::database::Database::new(&path).unwrap();
+    let changes = db.get_status_changes_ascending(1).unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].duration_ms, Some(5000));
+    assert_eq!(changes[0].last_success_at, None);
+}
+
+// ========== First check time ==========
+
+#[test]
+fn test_get_first_check_time() {
+    let test_db = TestDatabase::new();
+    let node_id = test_db
+        .db
+        .add_node(&fixtures::unit_test_http_node())
+        .unwrap();
+    assert_eq!(test_db.db.get_first_check_time(node_id).unwrap(), None);
+
+    let first = Utc::now() - Duration::hours(2);
+    for timestamp in [first + Duration::hours(1), first] {
+        test_db
+            .db
+            .add_monitoring_result(&MonitoringResult {
+                id: None,
+                node_id,
+                timestamp,
+                status: NodeStatus::Online,
+                response_time: Some(1),
+                details: None,
+            })
+            .unwrap();
+    }
+
+    assert_eq!(
+        test_db
+            .db
+            .get_first_check_time(node_id)
+            .unwrap()
+            .map(|t| t.timestamp_millis()),
+        Some(first.timestamp_millis())
+    );
+}
+
+// ========== record_check ==========
+
+#[test]
+fn test_record_check_writes_state_change_and_result_together() {
+    let test_db = TestDatabase::new();
+    let mut node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+    node.id = Some(node_id);
+    node.status = NodeStatus::Degraded;
+    node.consecutive_failures = 1;
+
+    let checked_at = Utc::now();
+    let change = StatusChange {
+        id: None,
+        node_id,
+        from_status: NodeStatus::Online,
+        to_status: NodeStatus::Degraded,
+        changed_at: checked_at,
+        duration_ms: Some(60_000),
+        last_success_at: Some(checked_at - Duration::minutes(1)),
+    };
+    let result = MonitoringResult {
+        id: None,
+        node_id,
+        timestamp: checked_at,
+        status: NodeStatus::Degraded,
+        response_time: None,
+        details: Some("timed out".to_string()),
+    };
+
+    test_db
+        .db
+        .record_check(&node, Some(&change), Some(&result))
+        .unwrap();
+
+    let stored_node = &test_db.db.get_all_nodes().unwrap()[0];
+    assert_eq!(stored_node.status, NodeStatus::Degraded);
+    assert_eq!(stored_node.consecutive_failures, 1);
+    let stored_change = test_db
+        .db
+        .get_latest_status_change(node_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored_change.to_status, NodeStatus::Degraded);
+    let stored_result = test_db
+        .db
+        .get_latest_monitoring_result(node_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored_result.details.as_deref(), Some("timed out"));
+}
+
+#[test]
+fn test_record_check_with_nothing_but_runtime_state() {
+    let test_db = TestDatabase::new();
+    let mut node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+    node.id = Some(node_id);
+    node.response_time = Some(42);
+
+    test_db.db.record_check(&node, None, None).unwrap();
+
+    assert_eq!(
+        test_db.db.get_all_nodes().unwrap()[0].response_time,
+        Some(42)
+    );
+    assert!(test_db
+        .db
+        .get_latest_status_change(node_id)
+        .unwrap()
+        .is_none());
+    assert!(test_db
+        .db
+        .get_latest_monitoring_result(node_id)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn test_record_check_is_atomic() {
+    let test_db = TestDatabase::new();
+    let mut node = fixtures::unit_test_http_node();
+    let node_id = test_db.db.add_node(&node).unwrap();
+    node.id = Some(node_id);
+    node.status = NodeStatus::Offline;
+
+    // The runtime-state write refuses a node without an id, which fails the
+    // transaction after nothing and before the status change.
+    let mut unsaved = node.clone();
+    unsaved.id = None;
+    let change = StatusChange {
+        id: None,
+        node_id,
+        from_status: NodeStatus::Online,
+        to_status: NodeStatus::Offline,
+        changed_at: Utc::now(),
+        duration_ms: None,
+        last_success_at: None,
+    };
+
+    assert!(test_db
+        .db
+        .record_check(&unsaved, Some(&change), None)
+        .is_err());
+
+    assert!(
+        test_db
+            .db
+            .get_latest_status_change(node_id)
+            .unwrap()
+            .is_none(),
+        "a failed write leaves no partial history behind"
+    );
+    assert_eq!(
+        test_db.db.get_all_nodes().unwrap()[0].status,
+        NodeStatus::Online,
+        "and the node's status is untouched"
+    );
+}
+
+// ========== Engine runs ==========
+
+#[test]
+fn test_engine_runs_record_start_and_heartbeat() {
+    let test_db = TestDatabase::new();
+    let started = Utc::now() - Duration::minutes(10);
+    let run_id = test_db.db.start_engine_run(started).unwrap();
+
+    let runs = test_db.db.get_engine_runs().unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].id, run_id);
+    assert_eq!(
+        runs[0].started_at.timestamp_millis(),
+        started.timestamp_millis()
+    );
+    assert_eq!(
+        runs[0].last_alive_at.timestamp_millis(),
+        started.timestamp_millis(),
+        "a run is alive at the moment it starts"
+    );
+
+    let alive = started + Duration::minutes(5);
+    test_db.db.touch_engine_run(run_id, alive).unwrap();
+    let runs = test_db.db.get_engine_runs().unwrap();
+    assert_eq!(
+        runs[0].last_alive_at.timestamp_millis(),
+        alive.timestamp_millis()
+    );
+}
+
+#[test]
+fn test_engine_runs_are_oldest_first() {
+    let test_db = TestDatabase::new();
+    let now = Utc::now();
+    test_db.db.start_engine_run(now).unwrap();
+    test_db
+        .db
+        .start_engine_run(now - Duration::hours(1))
+        .unwrap();
+
+    let runs = test_db.db.get_engine_runs().unwrap();
+    assert_eq!(runs.len(), 2);
+    assert!(runs[0].started_at < runs[1].started_at);
+}
+
+#[test]
+fn test_engine_runs_table_is_added_to_an_old_database() {
+    let test_db = TestDatabase::new();
+    let path = test_db.path().to_path_buf();
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("DROP TABLE engine_runs;").unwrap();
+    }
+    let db = net_monitor::database::Database::new(&path).unwrap();
+    assert!(db.get_engine_runs().unwrap().is_empty());
+    db.start_engine_run(Utc::now()).unwrap();
+    assert_eq!(db.get_engine_runs().unwrap().len(), 1);
 }

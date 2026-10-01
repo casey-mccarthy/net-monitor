@@ -1,6 +1,7 @@
 pub mod config;
 pub mod connection;
 pub mod database;
+pub mod history;
 pub mod models;
 pub mod monitor;
 pub mod monitoring_engine;

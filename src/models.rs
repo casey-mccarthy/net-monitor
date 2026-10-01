@@ -165,6 +165,14 @@ pub struct StatusChange {
     pub changed_at: DateTime<Utc>,
     /// Duration in milliseconds spent in the previous status (None for first status)
     pub duration_ms: Option<i64>,
+    /// When the node's most recent successful check ran, as of this change.
+    ///
+    /// For a change into Online this is the check that caused it. For a change
+    /// out of Online it is the last check that still succeeded, which bounds
+    /// when the node really went down: somewhere after `last_success_at` and
+    /// at or before `changed_at`. None when no success has been recorded.
+    #[serde(default)]
+    pub last_success_at: Option<DateTime<Utc>>,
 }
 
 impl StatusChange {
@@ -174,7 +182,6 @@ impl StatusChange {
     }
 
     /// Check if this is a transition to/from an error state
-    #[allow(dead_code)] // Future feature: status change analysis
     pub fn is_degradation(&self) -> bool {
         matches!(
             (self.from_status, self.to_status),
@@ -185,7 +192,6 @@ impl StatusChange {
     }
 
     /// Check if this is a recovery to a healthy state
-    #[allow(dead_code)] // Future feature: status change analysis
     pub fn is_recovery(&self) -> bool {
         matches!(
             (self.from_status, self.to_status),

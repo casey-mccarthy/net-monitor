@@ -5,7 +5,8 @@ Integration tests live here, one file per module. Unit tests live next to the co
 | File | Covers |
 |---|---|
 | `models_tests.rs` | `Node`, `MonitorDetail`, `NodeStatus`, `StatusChange`, JSON serialisation |
-| `database_tests.rs` | Schema creation and migration, node CRUD, monitoring results, status changes, uptime queries |
+| `database_tests.rs` | Schema creation and migration, node CRUD, monitoring results, status changes, engine runs, the per-check transaction, uptime queries |
+| `history_tests.rs` | Periods, outages, monitoring gaps, and the outage log text derived from status changes |
 | `monitoring_tests.rs` | HTTP, TCP, and ping checks, plus the soft/hard state transitions |
 | `import_export_tests.rs` | The `NodeImport` JSON format, including `sample_nodes.json` |
 | `connection_tests.rs` | SSH target parsing and command construction |
