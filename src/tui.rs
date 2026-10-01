@@ -1,6 +1,9 @@
 use crate::connection::ConnectionStrategy;
 use crate::database::Database;
-use crate::models::{MonitorDetail, Node, NodeImport, NodeStatus, StatusChange};
+use crate::history::{
+    self, format_duration, format_utc, Outage, OutageLog, OutageLogEntry, Period, PeriodKind,
+};
+use crate::models::{MonitorDetail, Node, NodeImport, NodeStatus};
 use crate::monitoring_engine::{self, MonitoringHandle, NodeConfigUpdate};
 use anyhow::Result;
 use chrono::Utc;
@@ -159,6 +162,7 @@ enum AppState {
     AddNode,
     EditNode,
     ViewHistory,
+    OutageLog,
     Help,
     ConfirmDelete,
     ImportModeSelect,
@@ -166,14 +170,46 @@ enum AppState {
     About,
 }
 
+/// A native file dialog to open after the key event has been handled.
 enum DeferredAction {
-    ShowImportDialog,
-    ShowExportDialog,
+    ImportNodes,
+    ExportNodes,
+    ExportOutageLog,
 }
 
 enum FileDialogKind {
     Import,
     Export,
+    OutageLog,
+}
+
+/// How far back the outage log looks.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum OutageWindow {
+    Hours8,
+    Hours12,
+    Hours24,
+    Days7,
+}
+
+impl OutageWindow {
+    fn duration(self) -> chrono::Duration {
+        match self {
+            OutageWindow::Hours8 => chrono::Duration::hours(8),
+            OutageWindow::Hours12 => chrono::Duration::hours(12),
+            OutageWindow::Hours24 => chrono::Duration::hours(24),
+            OutageWindow::Days7 => chrono::Duration::days(7),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            OutageWindow::Hours8 => "last 8h",
+            OutageWindow::Hours12 => "last 12h",
+            OutageWindow::Hours24 => "last 24h",
+            OutageWindow::Days7 => "last 7d",
+        }
+    }
 }
 
 /// Returns the index to select when moving down a list of `len` items, wrapping
@@ -224,8 +260,15 @@ pub struct NetworkMonitorTui {
     editing_node_id: Option<i64>,
     // Status history
     viewing_history_node_id: Option<i64>,
-    status_changes: Vec<StatusChange>,
+    /// The node's timeline, newest period first
+    history_periods: Vec<Period>,
+    /// The node's outages, oldest first
+    history_outages: Vec<Outage>,
     history_table_state: TableState,
+    // Outage log
+    outage_log: Option<OutageLog>,
+    outage_window: OutageWindow,
+    outage_table_state: TableState,
     // Delete confirmation
     delete_node_index: Option<usize>,
     // Import/Export
@@ -263,8 +306,12 @@ impl NetworkMonitorTui {
             node_form: NodeForm::default(),
             editing_node_id: None,
             viewing_history_node_id: None,
-            status_changes: Vec::new(),
+            history_periods: Vec::new(),
+            history_outages: Vec::new(),
             history_table_state: TableState::default(),
+            outage_log: None,
+            outage_window: OutageWindow::Hours24,
+            outage_table_state: TableState::default(),
             delete_node_index: None,
             import_file_path: None,
             import_mode_selected: 0,
@@ -419,7 +466,8 @@ impl NetworkMonitorTui {
                                 KeyCode::Esc | KeyCode::Char('q') => {
                                     self.state = AppState::Main;
                                     self.viewing_history_node_id = None;
-                                    self.status_changes.clear();
+                                    self.history_periods.clear();
+                                    self.history_outages.clear();
                                     self.history_table_state.select(None);
                                 }
                                 KeyCode::Char('?') => {
@@ -436,6 +484,7 @@ impl NetworkMonitorTui {
                                 }
                                 _ => {}
                             },
+                            AppState::OutageLog => self.handle_outage_log_input(key.code),
                             AppState::Help => {
                                 if matches!(
                                     key.code,
@@ -473,7 +522,7 @@ impl NetworkMonitorTui {
             // Handle deferred actions (file dialogs) outside the key event match
             if let Some(action) = self.deferred_action.take() {
                 match action {
-                    DeferredAction::ShowImportDialog => {
+                    DeferredAction::ImportNodes => {
                         match self.show_file_dialog(FileDialogKind::Import, terminal)? {
                             Some(path) => {
                                 self.import_file_path = Some(path);
@@ -485,9 +534,17 @@ impl NetworkMonitorTui {
                             ),
                         }
                     }
-                    DeferredAction::ShowExportDialog => {
+                    DeferredAction::ExportNodes => {
                         match self.show_file_dialog(FileDialogKind::Export, terminal)? {
                             Some(path) => self.export_nodes_to_path(&path),
+                            None => self.set_status_message(
+                                "Export cancelled (no file chosen or no file dialog available)",
+                            ),
+                        }
+                    }
+                    DeferredAction::ExportOutageLog => {
+                        match self.show_file_dialog(FileDialogKind::OutageLog, terminal)? {
+                            Some(path) => self.export_outage_log_to_path(&path),
                             None => self.set_status_message(
                                 "Export cancelled (no file chosen or no file dialog available)",
                             ),
@@ -519,6 +576,13 @@ impl NetworkMonitorTui {
                 .add_filter("JSON", &["json"])
                 .set_file_name("nodes.json")
                 .save_file(),
+            FileDialogKind::OutageLog => rfd::FileDialog::new()
+                .add_filter("Text", &["txt"])
+                .set_file_name(format!(
+                    "outage-log-{}.txt",
+                    Utc::now().format("%Y%m%dT%H%MZ")
+                ))
+                .save_file(),
         };
 
         // Re-enter TUI mode
@@ -534,6 +598,7 @@ impl NetworkMonitorTui {
             AppState::Main | AppState::Reorder => self.render_main_view(f),
             AppState::AddNode | AppState::EditNode => self.render_node_form(f),
             AppState::ViewHistory => self.render_history_view(f),
+            AppState::OutageLog => self.render_outage_log_view(f),
             AppState::Help => self.render_help_view(f),
             AppState::ConfirmDelete => self.render_confirm_delete(f),
             AppState::ImportModeSelect => self.render_import_mode_select(f),
@@ -1102,7 +1167,7 @@ impl NetworkMonitorTui {
             .unwrap_or_else(|| "Unknown".to_string());
 
         let block = Block::default()
-            .title(format!("Status History - {}", node_name))
+            .title(format!("Status History - {} (UTC)", node_name))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan));
 
@@ -1112,15 +1177,16 @@ impl NetworkMonitorTui {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(6), // Uptime statistics section
-                Constraint::Min(0),    // Status change history
+                Constraint::Length(5), // Uptime statistics section
+                Constraint::Min(0),    // Timeline
                 Constraint::Length(1), // Help text
             ])
             .split(inner);
 
+        let now = Utc::now();
+
         // Uptime Statistics Section
         if let Some(node_id) = self.viewing_history_node_id {
-            let now = Utc::now();
             let periods = vec![
                 ("Last 24 Hours", now - chrono::Duration::hours(24)),
                 ("Last 7 Days", now - chrono::Duration::days(7)),
@@ -1134,38 +1200,52 @@ impl NetworkMonitorTui {
                     .add_modifier(Modifier::BOLD),
             )])];
 
-            // Add current status duration
-            if let Ok(Some(duration_ms)) = self.database.get_current_status_duration(node_id) {
-                // Get current status
-                let current_status = self
-                    .nodes
-                    .iter()
-                    .find(|n| n.id == Some(node_id))
-                    .map(|n| n.status)
-                    .unwrap_or(NodeStatus::Offline);
-
-                let status_color = match current_status {
-                    NodeStatus::Online => Color::Green,
-                    NodeStatus::Offline => Color::Red,
-                    NodeStatus::Degraded => Color::Yellow,
-                };
-
+            // Time in the current state, from the newest period
+            if let Some(current) = self.history_periods.first() {
+                let (label, color) = period_label(current.kind);
+                let duration = current
+                    .duration_ms(now)
+                    .map(format_duration)
+                    .unwrap_or_else(|| "unknown".to_string());
                 uptime_lines.push(Line::from(vec![
                     Span::raw("Time in Current Status ("),
                     Span::styled(
-                        current_status.to_string(),
-                        Style::default()
-                            .fg(status_color)
-                            .add_modifier(Modifier::BOLD),
+                        label,
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
                     ),
                     Span::raw("): "),
-                    Span::styled(
-                        format_duration(duration_ms),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled(duration, Style::default().add_modifier(Modifier::BOLD)),
                 ]));
             }
 
+            let day_ago = now - chrono::Duration::hours(24);
+            let recent: Vec<&Outage> = self
+                .history_outages
+                .iter()
+                .filter(|outage| outage.overlaps_window(day_ago, now))
+                .collect();
+            let down_ms: i64 = recent
+                .iter()
+                .map(|outage| {
+                    (outage.ended_at.unwrap_or(now) - outage.started_at.max(day_ago))
+                        .num_milliseconds()
+                        .max(0)
+                })
+                .sum();
+            uptime_lines.push(Line::from(vec![
+                Span::raw("Outages (last 24h): "),
+                Span::styled(
+                    format!("{}", recent.len()),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(", down "),
+                Span::styled(
+                    format_duration(down_ms),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ]));
+
+            let mut percentages = Vec::new();
             for (label, start_time) in periods {
                 if let Ok(uptime_pct) = self
                     .database
@@ -1178,29 +1258,32 @@ impl NetworkMonitorTui {
                     } else {
                         Color::Red
                     };
-
-                    uptime_lines.push(Line::from(vec![
-                        Span::raw(format!("{}: ", label)),
-                        Span::styled(
-                            format!("{:.2}%", uptime_pct),
-                            Style::default().fg(color).add_modifier(Modifier::BOLD),
-                        ),
-                    ]));
+                    if !percentages.is_empty() {
+                        percentages.push(Span::raw("   "));
+                    }
+                    percentages.push(Span::raw(format!("{}: ", label)));
+                    percentages.push(Span::styled(
+                        format!("{:.2}%", uptime_pct),
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                    ));
                 }
+            }
+            if !percentages.is_empty() {
+                uptime_lines.push(Line::from(percentages));
             }
 
             let uptime_paragraph = Paragraph::new(uptime_lines).wrap(Wrap { trim: true });
             f.render_widget(uptime_paragraph, chunks[0]);
         }
 
-        // Status Change History Section
-        if self.status_changes.is_empty() && self.viewing_history_node_id.is_none() {
-            let msg = Paragraph::new("No status changes recorded.")
+        // Timeline Section
+        if self.history_periods.is_empty() {
+            let msg = Paragraph::new("Not checked yet.")
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Gray));
             f.render_widget(msg, chunks[1]);
         } else {
-            let header = Row::new(vec!["Timestamp", "State", "Duration"])
+            let header = Row::new(vec!["State", "Began (UTC)", "Ended (UTC)", "Duration"])
                 .style(
                     Style::default()
                         .fg(Color::Yellow)
@@ -1208,99 +1291,44 @@ impl NetworkMonitorTui {
                 )
                 .bottom_margin(1);
 
-            let mut rows: Vec<Row> = Vec::new();
-
-            // Add current state as the first row
-            if let Some(node_id) = self.viewing_history_node_id {
-                // Get current node status
-                let current_status = self
-                    .nodes
-                    .iter()
-                    .find(|n| n.id == Some(node_id))
-                    .map(|n| n.status)
-                    .unwrap_or(NodeStatus::Offline);
-
-                // Get current duration
-                let current_duration = self
-                    .database
-                    .get_current_status_duration(node_id)
-                    .ok()
-                    .flatten()
-                    .map(format_duration)
-                    .unwrap_or_else(|| "N/A".to_string());
-
-                let status_color = match current_status {
-                    NodeStatus::Online => Color::Green,
-                    NodeStatus::Offline => Color::Red,
-                    NodeStatus::Degraded => Color::Yellow,
-                };
-
-                let state_text = match current_status {
-                    NodeStatus::Online => "Up",
-                    NodeStatus::Degraded => "Degraded",
-                    NodeStatus::Offline => "Down",
-                };
-
-                // Add current state row
-                rows.push(Row::new(vec![
-                    Cell::from(Span::styled(
-                        "Current",
+            let rows: Vec<Row> = self
+                .history_periods
+                .iter()
+                .map(|period| {
+                    let (label, color) = period_label(period.kind);
+                    let began = period
+                        .started_at
+                        .map(format_utc)
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let ended = period
+                        .ended_at
+                        .map(format_utc)
+                        .unwrap_or_else(|| "ongoing".to_string());
+                    let duration = period
+                        .duration_ms(now)
+                        .map(format_duration)
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let style = if period.is_ongoing() {
+                        Style::default().add_modifier(Modifier::BOLD)
+                    } else {
                         Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Cell::from(Span::styled(
-                        state_text,
-                        Style::default()
-                            .fg(status_color)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Cell::from(Span::styled(
-                        current_duration,
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )),
-                ]));
-            }
-
-            // Add historical status changes
-            rows.extend(self.status_changes.iter().map(|change| {
-                let timestamp = change
-                    .changed_at
-                    .with_timezone(&chrono::Local)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string();
-
-                let duration = change
-                    .duration_ms
-                    .map(format_duration)
-                    .unwrap_or_else(|| "N/A".to_string());
-
-                // Use to_status since changed_at represents when the node transitioned to this state
-                let status_color = match change.to_status {
-                    NodeStatus::Online => Color::Green,
-                    NodeStatus::Offline => Color::Red,
-                    NodeStatus::Degraded => Color::Yellow,
-                };
-
-                let state_text = match change.to_status {
-                    NodeStatus::Online => "Up",
-                    NodeStatus::Degraded => "Degraded",
-                    NodeStatus::Offline => "Down",
-                };
-
-                Row::new(vec![
-                    Cell::from(Span::styled(timestamp, Style::default())),
-                    Cell::from(Span::styled(state_text, Style::default().fg(status_color))),
-                    Cell::from(Span::styled(duration, Style::default())),
-                ])
-            }));
+                    };
+                    Row::new(vec![
+                        Cell::from(Span::styled(label, style.fg(color))),
+                        Cell::from(Span::styled(began, style)),
+                        Cell::from(Span::styled(ended, style)),
+                        Cell::from(Span::styled(duration, style)),
+                    ])
+                })
+                .collect();
 
             let table = Table::new(
                 rows,
                 [
-                    Constraint::Percentage(40),
-                    Constraint::Percentage(20),
-                    Constraint::Percentage(40),
+                    Constraint::Percentage(18),
+                    Constraint::Percentage(30),
+                    Constraint::Percentage(30),
+                    Constraint::Percentage(22),
                 ],
             )
             .header(header)
@@ -1321,6 +1349,189 @@ impl NetworkMonitorTui {
             Span::raw(" Close"),
         ]));
         f.render_widget(help, chunks[2]);
+    }
+
+    fn render_outage_log_view(&mut self, f: &mut Frame) {
+        let area = centered_rect(90, 85, f.area());
+        f.render_widget(Clear, area);
+
+        let block = Block::default()
+            .title(format!("Outage Log - {} (UTC)", self.outage_window.label()))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        let Some(log) = self.outage_log.as_ref() else {
+            let msg = Paragraph::new("Outage log unavailable; see the log file.")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Red));
+            f.render_widget(msg, inner);
+            return;
+        };
+
+        let gap_lines = log.gaps.len().min(3) + usize::from(log.gaps.len() > 3);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),                    // Summary
+                Constraint::Min(0),                       // Outages
+                Constraint::Length(gap_lines as u16 + 1), // Monitoring gaps
+                Constraint::Length(1),                    // Help text
+            ])
+            .split(inner);
+
+        let summary = vec![
+            Line::from(vec![
+                Span::raw("From "),
+                Span::styled(
+                    format_utc(log.since),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" to "),
+                Span::styled(
+                    format_utc(log.generated_at),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    format!("{} outage(s)", log.entries.len()),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(", "),
+                Span::styled(
+                    format!("{} ongoing", log.ongoing_count()),
+                    Style::default().fg(if log.ongoing_count() > 0 {
+                        Color::Red
+                    } else {
+                        Color::Green
+                    }),
+                ),
+                Span::raw(", total down "),
+                Span::styled(
+                    format_duration(log.total_outage_ms()),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(Span::styled(
+                "Down is the first failed check; the node was still up at Last up.",
+                Style::default().fg(Color::Gray),
+            )),
+        ];
+        f.render_widget(Paragraph::new(summary), chunks[0]);
+
+        if log.entries.is_empty() {
+            let msg = Paragraph::new("No outages in this window.")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Green));
+            f.render_widget(msg, chunks[1]);
+        } else {
+            let header = Row::new(vec!["Node", "Last up", "Down", "Restored", "Duration"])
+                .style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .bottom_margin(1);
+
+            let rows: Vec<Row> = log
+                .entries
+                .iter()
+                .map(|entry| {
+                    let outage = entry.outage;
+                    let ongoing = outage.is_ongoing();
+                    let style = if ongoing {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    Row::new(vec![
+                        Cell::from(Span::styled(entry.node_name.clone(), style)),
+                        Cell::from(Span::styled(
+                            outage.last_success_at.map(format_utc).unwrap_or_default(),
+                            style,
+                        )),
+                        Cell::from(Span::styled(format_utc(outage.started_at), style)),
+                        Cell::from(Span::styled(
+                            outage
+                                .ended_at
+                                .map(format_utc)
+                                .unwrap_or_else(|| "ongoing".to_string()),
+                            style,
+                        )),
+                        Cell::from(Span::styled(
+                            format_duration(outage.duration_ms(log.generated_at)),
+                            style,
+                        )),
+                    ])
+                })
+                .collect();
+
+            let table = Table::new(
+                rows,
+                [
+                    Constraint::Percentage(22),
+                    Constraint::Percentage(21),
+                    Constraint::Percentage(21),
+                    Constraint::Percentage(21),
+                    Constraint::Percentage(15),
+                ],
+            )
+            .header(header)
+            .row_highlight_style(
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(">> ");
+            f.render_stateful_widget(table, chunks[1], &mut self.outage_table_state);
+        }
+
+        if !log.gaps.is_empty() {
+            let mut lines = vec![Line::from(Span::styled(
+                "Not monitored:",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ))];
+            for gap in log.gaps.iter().take(3) {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "  {} to {} ({})",
+                        format_utc(gap.from),
+                        format_utc(gap.to),
+                        format_duration(gap.duration_ms())
+                    ),
+                    Style::default().fg(Color::Gray),
+                )));
+            }
+            if log.gaps.len() > 3 {
+                lines.push(Line::from(Span::styled(
+                    format!("  +{} more in the export", log.gaps.len() - 3),
+                    Style::default().fg(Color::Gray),
+                )));
+            }
+            f.render_widget(Paragraph::new(lines), chunks[2]);
+        }
+
+        let help = Paragraph::new(Line::from(vec![
+            Span::styled("[1]", Style::default().fg(Color::Yellow)),
+            Span::raw(" 8h "),
+            Span::styled("[2]", Style::default().fg(Color::Yellow)),
+            Span::raw(" 12h "),
+            Span::styled("[3]", Style::default().fg(Color::Yellow)),
+            Span::raw(" 24h "),
+            Span::styled("[4]", Style::default().fg(Color::Yellow)),
+            Span::raw(" 7d | "),
+            Span::styled("[x]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Export | "),
+            Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Scroll | "),
+            Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Close"),
+        ]));
+        f.render_widget(help, chunks[3]);
     }
 
     fn render_about_view(&mut self, f: &mut Frame) {
@@ -1404,6 +1615,10 @@ impl NetworkMonitorTui {
                         Span::raw(" - View status history"),
                     ]),
                     Line::from(vec![
+                        Span::styled("o", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Outage log for all nodes"),
+                    ]),
+                    Line::from(vec![
                         Span::styled("i", Style::default().fg(Color::Yellow)),
                         Span::raw(" - Import nodes from JSON"),
                     ]),
@@ -1462,9 +1677,42 @@ impl NetworkMonitorTui {
                 "Help - Status History",
                 vec![
                     Line::from(vec![Span::raw(
-                        "View node status change history and uptime statistics.",
+                        "The node's timeline, newest first: each state, when it began, \
+                         when it ended, and how long it lasted. Times are UTC. Spans \
+                         when the monitor was not running are marked Not monitored.",
                     )]),
                     Line::from(""),
+                    Line::from(vec![
+                        Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Scroll"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("Esc/q", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Return to main view"),
+                    ]),
+                ],
+            ),
+            Some(AppState::OutageLog) => (
+                "Help - Outage Log",
+                vec![
+                    Line::from(vec![Span::raw(
+                        "Every confirmed outage across all nodes in the window, newest \
+                         first, with the last good check, when it went down, when it \
+                         was restored, and how long it lasted. Times are UTC.",
+                    )]),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("1/2/3/4", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Window: 8h / 12h / 24h / 7d"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("x", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Export the log as a text file"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
+                        Span::raw(" - Scroll"),
+                    ]),
                     Line::from(vec![
                         Span::styled("Esc/q", Style::default().fg(Color::Yellow)),
                         Span::raw(" - Return to main view"),
@@ -1757,11 +2005,15 @@ impl NetworkMonitorTui {
                     }
                 }
             }
+            KeyCode::Char('o') | KeyCode::Char('O') => {
+                self.load_outage_log();
+                self.state = AppState::OutageLog;
+            }
             KeyCode::Char('i') | KeyCode::Char('I') => {
-                self.deferred_action = Some(DeferredAction::ShowImportDialog);
+                self.deferred_action = Some(DeferredAction::ImportNodes);
             }
             KeyCode::Char('x') | KeyCode::Char('X') => {
-                self.deferred_action = Some(DeferredAction::ShowExportDialog);
+                self.deferred_action = Some(DeferredAction::ExportNodes);
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 if self.nodes.len() > 1 {
@@ -2377,30 +2629,145 @@ impl NetworkMonitorTui {
         }
     }
 
-    /// Number of rows in the history table: the "Current" state row (shown
-    /// whenever a node is being viewed) plus one row per recorded change.
-    /// Must match what `render_history_view` draws.
-    fn history_row_count(&self) -> usize {
-        usize::from(self.viewing_history_node_id.is_some()) + self.status_changes.len()
+    fn handle_outage_log_input(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.state = AppState::Main;
+                self.outage_log = None;
+                self.outage_table_state.select(None);
+            }
+            KeyCode::Char('?') => {
+                self.previous_state = Some(AppState::OutageLog);
+                self.state = AppState::Help;
+            }
+            KeyCode::Char('1') => self.set_outage_window(OutageWindow::Hours8),
+            KeyCode::Char('2') => self.set_outage_window(OutageWindow::Hours12),
+            KeyCode::Char('3') => self.set_outage_window(OutageWindow::Hours24),
+            KeyCode::Char('4') => self.set_outage_window(OutageWindow::Days7),
+            KeyCode::Char('x') | KeyCode::Char('X') => {
+                self.deferred_action = Some(DeferredAction::ExportOutageLog);
+            }
+            KeyCode::Down => {
+                let rows = self.outage_row_count();
+                select_next_row(&mut self.outage_table_state, rows);
+            }
+            KeyCode::Up => {
+                let rows = self.outage_row_count();
+                select_previous_row(&mut self.outage_table_state, rows);
+            }
+            _ => {}
+        }
     }
 
-    fn load_status_history(&mut self, node_id: i64) {
-        match self.database.get_status_changes(node_id, Some(50)) {
-            Ok(changes) => {
-                self.status_changes = changes;
-                // Start on the first row (the current state)
-                if self.history_row_count() > 0 {
-                    self.history_table_state.select(Some(0));
-                } else {
-                    self.history_table_state.select(None);
+    fn set_outage_window(&mut self, window: OutageWindow) {
+        self.outage_window = window;
+        self.load_outage_log();
+    }
+
+    fn outage_row_count(&self) -> usize {
+        self.outage_log
+            .as_ref()
+            .map(|log| log.entries.len())
+            .unwrap_or(0)
+    }
+
+    /// The spans during which nothing was monitored, as far as the database knows.
+    fn monitoring_gaps(&self, now: chrono::DateTime<Utc>) -> Vec<history::MonitoringGap> {
+        match self.database.get_engine_runs() {
+            Ok(runs) => history::monitoring_gaps(&runs, now, self.monitoring_handle.is_some()),
+            Err(e) => {
+                error!("Failed to load engine runs: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Builds the outage log for the current window over every node.
+    fn load_outage_log(&mut self) {
+        let now = Utc::now();
+        let since = now - self.outage_window.duration();
+        let gaps = self.monitoring_gaps(now);
+
+        let mut entries = Vec::new();
+        for node in &self.nodes {
+            let Some(node_id) = node.id else { continue };
+            match self.database.get_status_changes_ascending(node_id) {
+                Ok(changes) => {
+                    entries.extend(history::outages(&changes).into_iter().map(|outage| {
+                        OutageLogEntry {
+                            node_name: node.name.clone(),
+                            outage,
+                        }
+                    }));
                 }
+                Err(e) => {
+                    error!("Failed to load status changes for node {}: {}", node_id, e);
+                    self.outage_log = None;
+                    return;
+                }
+            }
+        }
+
+        let log = OutageLog::new(since, now, entries, &gaps);
+        self.outage_table_state
+            .select((!log.entries.is_empty()).then_some(0));
+        self.outage_log = Some(log);
+    }
+
+    fn export_outage_log_to_path(&mut self, path: &PathBuf) {
+        let Some(log) = self.outage_log.as_ref() else {
+            self.set_status_message("No outage log to export");
+            return;
+        };
+        match std::fs::write(path, log.to_text()) {
+            Ok(()) => self.set_status_message(format!("Outage log exported to {}", path.display())),
+            Err(e) => self.set_status_message(format!("Failed to write outage log: {}", e)),
+        }
+    }
+
+    /// Number of rows in the history table. Must match what
+    /// `render_history_view` draws.
+    fn history_row_count(&self) -> usize {
+        self.history_periods.len()
+    }
+
+    /// Loads a node's timeline and outages for the history view.
+    fn load_status_history(&mut self, node_id: i64) {
+        let now = Utc::now();
+        let node = self.nodes.iter().find(|n| n.id == Some(node_id));
+        let current_status = node.map(|n| n.status).unwrap_or(NodeStatus::Offline);
+        let ever_checked = node.is_some_and(|n| n.last_check.is_some());
+
+        let loaded = self
+            .database
+            .get_status_changes_ascending(node_id)
+            .and_then(|changes| {
+                let first_checked_at = self.database.get_first_check_time(node_id)?;
+                Ok((changes, first_checked_at))
+            });
+
+        match loaded {
+            Ok((changes, first_checked_at)) => {
+                self.history_outages = history::outages(&changes);
+                self.history_periods = if changes.is_empty() && !ever_checked {
+                    Vec::new()
+                } else {
+                    let gaps = self.monitoring_gaps(now);
+                    let mut periods =
+                        history::periods(&changes, current_status, first_checked_at, &gaps);
+                    periods.reverse();
+                    periods
+                };
             }
             Err(e) => {
                 error!("Failed to load status history: {}", e);
-                self.status_changes.clear();
-                self.history_table_state.select(None);
+                self.history_periods.clear();
+                self.history_outages.clear();
             }
         }
+        // Start on the first row (the current state)
+        self.history_table_state
+            .select((self.history_row_count() > 0).then_some(0));
     }
 
     fn set_status_message(&mut self, message: impl Into<String>) {
@@ -2473,20 +2840,13 @@ fn restore_node_order(original_order: &[Option<i64>], mut nodes: Vec<Node>) -> V
     ordered
 }
 
-fn format_duration(duration_ms: i64) -> String {
-    let seconds = duration_ms / 1000;
-    let minutes = seconds / 60;
-    let hours = minutes / 60;
-    let days = hours / 24;
-
-    if days > 0 {
-        format!("{}d {}h", days, hours % 24)
-    } else if hours > 0 {
-        format!("{}h {}m", hours, minutes % 60)
-    } else if minutes > 0 {
-        format!("{}m {}s", minutes, seconds % 60)
-    } else {
-        format!("{}s", seconds)
+/// The label and colour for a period in the history view.
+fn period_label(kind: PeriodKind) -> (&'static str, Color) {
+    match kind {
+        PeriodKind::Status(NodeStatus::Online) => ("Up", Color::Green),
+        PeriodKind::Status(NodeStatus::Degraded) => ("Degraded", Color::Yellow),
+        PeriodKind::Status(NodeStatus::Offline) => ("Down", Color::Red),
+        PeriodKind::Unmonitored => ("Not monitored", Color::Gray),
     }
 }
 

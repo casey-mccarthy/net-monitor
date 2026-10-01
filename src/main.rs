@@ -1,6 +1,7 @@
 mod config;
 mod connection;
 mod database;
+mod history;
 mod models;
 mod monitor;
 mod monitoring_engine;

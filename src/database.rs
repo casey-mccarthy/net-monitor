@@ -1,3 +1,4 @@
+use crate::history::EngineRun;
 use crate::models::{MonitorDetail, MonitoringResult, Node, NodeStatus, StatusChange};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -75,6 +76,15 @@ impl Database {
             [],
         )?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS engine_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT NOT NULL,
+                last_alive_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+
         // Create indexes for efficient queries
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_status_changes_node_id ON status_changes(node_id)",
@@ -96,6 +106,31 @@ impl Database {
 
         // Add retry tracking columns
         self.migrate_retry_columns(&conn)?;
+
+        // Record the last successful check on each status change
+        self.migrate_last_success_column(&conn)?;
+
+        Ok(())
+    }
+
+    /// Migrate to add `status_changes.last_success_at` if it doesn't exist
+    fn migrate_last_success_column(&self, conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(status_changes)")?;
+        let existing_columns: Vec<String> = stmt
+            .query_map([], |row| {
+                let column_name: String = row.get(1)?;
+                Ok(column_name)
+            })?
+            .filter_map(|name| name.ok())
+            .collect();
+
+        if !existing_columns.contains(&"last_success_at".to_string()) {
+            conn.execute(
+                "ALTER TABLE status_changes ADD COLUMN last_success_at TEXT",
+                [],
+            )?;
+            info!("Added last_success_at column to status_changes table");
+        }
 
         Ok(())
     }
@@ -344,11 +379,15 @@ impl Database {
     /// possibly stale copy of the node's configuration (name, target, interval)
     /// never overwrites edits the user has made in the meantime.
     pub fn update_node_runtime_state(&self, node: &Node) -> Result<()> {
+        let conn = self.get_connection()?;
+        Self::write_node_runtime_state(&conn, node)
+    }
+
+    fn write_node_runtime_state(conn: &Connection, node: &Node) -> Result<()> {
         let node_id = node.id.ok_or_else(|| {
             anyhow::anyhow!("Cannot update runtime state of a node without an id")
         })?;
 
-        let conn = self.get_connection()?;
         conn.execute(
             "UPDATE nodes SET
                 status = ?1, last_check = ?2, response_time = ?3, consecutive_failures = ?4
@@ -407,9 +446,37 @@ impl Database {
         Ok(count)
     }
 
+    /// Records the outcome of one check atomically: the node's runtime state,
+    /// the status change it caused (if any), and the monitoring result (if it
+    /// is to be kept). Either all three land or none do, so a crash or a
+    /// failed write can never leave the node's status disagreeing with its
+    /// status history.
+    pub fn record_check(
+        &self,
+        node: &Node,
+        change: Option<&StatusChange>,
+        result: Option<&MonitoringResult>,
+    ) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction()?;
+        Self::write_node_runtime_state(&tx, node)?;
+        if let Some(change) = change {
+            Self::insert_status_change(&tx, change)?;
+        }
+        if let Some(result) = result {
+            Self::insert_monitoring_result(&tx, result)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Adds a monitoring result to the database
     pub fn add_monitoring_result(&self, result: &MonitoringResult) -> Result<i64> {
         let conn = self.get_connection()?;
+        Self::insert_monitoring_result(&conn, result)
+    }
+
+    fn insert_monitoring_result(conn: &Connection, result: &MonitoringResult) -> Result<i64> {
         let status_str = result.status.to_string();
         conn.execute(
             "INSERT INTO monitoring_results (node_id, timestamp, status, response_time, details)
@@ -427,14 +494,30 @@ impl Database {
 
     /// Gets the most recent monitoring result for a node
     pub fn get_latest_monitoring_result(&self, node_id: i64) -> Result<Option<MonitoringResult>> {
+        self.get_monitoring_result_at_end(node_id, "DESC")
+    }
+
+    /// When a node was first checked, if it has ever been checked.
+    pub fn get_first_check_time(&self, node_id: i64) -> Result<Option<DateTime<Utc>>> {
+        Ok(self
+            .get_monitoring_result_at_end(node_id, "ASC")?
+            .map(|result| result.timestamp))
+    }
+
+    fn get_monitoring_result_at_end(
+        &self,
+        node_id: i64,
+        order: &str,
+    ) -> Result<Option<MonitoringResult>> {
         let conn = self.get_connection()?;
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT id, node_id, timestamp, status, response_time, details
              FROM monitoring_results
              WHERE node_id = ?
-             ORDER BY timestamp DESC
+             ORDER BY timestamp {}
              LIMIT 1",
-        )?;
+            order
+        ))?;
 
         let mut results = stmt.query_map([node_id], |row| {
             let status_str: String = row.get("status")?;
@@ -464,18 +547,40 @@ impl Database {
     /// Adds a status change event to the database
     pub fn add_status_change(&self, change: &StatusChange) -> Result<i64> {
         let conn = self.get_connection()?;
+        Self::insert_status_change(&conn, change)
+    }
+
+    fn insert_status_change(conn: &Connection, change: &StatusChange) -> Result<i64> {
         conn.execute(
-            "INSERT INTO status_changes (node_id, from_status, to_status, changed_at, duration_ms)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO status_changes
+                (node_id, from_status, to_status, changed_at, duration_ms, last_success_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
             params![
                 change.node_id,
                 change.from_status.to_string(),
                 change.to_status.to_string(),
                 change.changed_at.to_rfc3339(),
                 change.duration_ms,
+                change.last_success_at.map(|t| t.to_rfc3339()),
             ],
         )?;
         Ok(conn.last_insert_rowid())
+    }
+
+    /// Retrieves every status change for a node, oldest first: the order the
+    /// `history` module wants.
+    pub fn get_status_changes_ascending(&self, node_id: i64) -> Result<Vec<StatusChange>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, node_id, from_status, to_status, changed_at, duration_ms, last_success_at
+             FROM status_changes
+             WHERE node_id = ?
+             ORDER BY changed_at ASC",
+        )?;
+        let changes = stmt.query_map([node_id], |row| self.row_to_status_change(row))?;
+        changes
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     /// Retrieves status changes for a node, ordered by most recent first
@@ -487,7 +592,7 @@ impl Database {
         let conn = self.get_connection()?;
         let query = if let Some(limit) = limit {
             format!(
-                "SELECT id, node_id, from_status, to_status, changed_at, duration_ms
+                "SELECT id, node_id, from_status, to_status, changed_at, duration_ms, last_success_at
                  FROM status_changes
                  WHERE node_id = ?
                  ORDER BY changed_at DESC
@@ -495,7 +600,7 @@ impl Database {
                 limit
             )
         } else {
-            "SELECT id, node_id, from_status, to_status, changed_at, duration_ms
+            "SELECT id, node_id, from_status, to_status, changed_at, duration_ms, last_success_at
              FROM status_changes
              WHERE node_id = ?
              ORDER BY changed_at DESC"
@@ -513,7 +618,7 @@ impl Database {
     pub fn get_latest_status_change(&self, node_id: i64) -> Result<Option<StatusChange>> {
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, node_id, from_status, to_status, changed_at, duration_ms
+            "SELECT id, node_id, from_status, to_status, changed_at, duration_ms, last_success_at
              FROM status_changes
              WHERE node_id = ?
              ORDER BY changed_at DESC
@@ -528,15 +633,15 @@ impl Database {
         }
     }
 
-    /// Calculate how long the node has been in its current status
+    /// Calculate how long the node has been in its current status: since its
+    /// latest status change, or since its first check if it has never
+    /// changed status. None for a node that has never been checked.
     pub fn get_current_status_duration(&self, node_id: i64) -> Result<Option<i64>> {
-        if let Some(latest_change) = self.get_latest_status_change(node_id)? {
-            let duration_ms =
-                StatusChange::calculate_duration(latest_change.changed_at, Utc::now());
-            Ok(Some(duration_ms))
-        } else {
-            Ok(None)
-        }
+        let since = match self.get_latest_status_change(node_id)? {
+            Some(latest_change) => Some(latest_change.changed_at),
+            None => self.get_first_check_time(node_id)?,
+        };
+        Ok(since.map(|since| StatusChange::calculate_duration(since, Utc::now())))
     }
 
     /// Gets the status of a node at a specific point in time
@@ -544,7 +649,6 @@ impl Database {
     ///
     /// Returns None if there are no status changes before the given time
     /// (in which case the node should be assumed to be in its default/current state)
-    #[allow(dead_code)] // Future feature: historical status queries
     pub fn get_status_at_time(
         &self,
         node_id: i64,
@@ -623,6 +727,7 @@ impl Database {
                     to_status: to_status.parse().unwrap_or(NodeStatus::Offline),
                     changed_at,
                     duration_ms: None,
+                    last_success_at: None,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -718,6 +823,12 @@ impl Database {
             .map(|dt| dt.with_timezone(&Utc))
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
 
+        let last_success_str: Option<String> = row.get("last_success_at")?;
+        let last_success_at = last_success_str
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc));
+
         Ok(StatusChange {
             id: row.get("id")?,
             node_id: row.get("node_id")?,
@@ -725,7 +836,55 @@ impl Database {
             to_status: to_status.parse().unwrap_or(NodeStatus::Offline),
             changed_at,
             duration_ms: row.get("duration_ms")?,
+            last_success_at,
         })
+    }
+
+    // ---- Engine runs -----------------------------------------------------
+
+    /// Records that a monitoring engine started at `started_at`. Returns the
+    /// run's id, which the engine passes to `touch_engine_run` as a heartbeat.
+    pub fn start_engine_run(&self, started_at: DateTime<Utc>) -> Result<i64> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO engine_runs (started_at, last_alive_at) VALUES (?1, ?1)",
+            params![started_at.to_rfc3339()],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Marks an engine run as still alive at `alive_at`.
+    pub fn touch_engine_run(&self, run_id: i64, alive_at: DateTime<Utc>) -> Result<()> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "UPDATE engine_runs SET last_alive_at = ?1 WHERE id = ?2",
+            params![alive_at.to_rfc3339(), run_id],
+        )?;
+        Ok(())
+    }
+
+    /// Every engine run ever recorded, oldest first.
+    pub fn get_engine_runs(&self) -> Result<Vec<EngineRun>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, started_at, last_alive_at FROM engine_runs ORDER BY started_at ASC",
+        )?;
+        let runs = stmt.query_map([], |row| {
+            let started_at: String = row.get("started_at")?;
+            let last_alive_at: String = row.get("last_alive_at")?;
+            let parse = |s: &str| {
+                DateTime::parse_from_rfc3339(s)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|_| rusqlite::Error::InvalidQuery)
+            };
+            Ok(EngineRun {
+                id: row.get("id")?,
+                started_at: parse(&started_at)?,
+                last_alive_at: parse(&last_alive_at)?,
+            })
+        })?;
+        runs.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 }
 

@@ -12,8 +12,12 @@ What the app does today, roughly in the order it arrived. Release-by-release det
 - Checks run concurrently as tokio tasks; a slow node never holds up the rest
 
 ## History
-- Status change log for every transition, with the duration of the previous state
-- History view per node with uptime/downtime and the most recent change reachable
+- Status change log for every transition, stamped with the check's own time, the duration of the previous state, and the last successful check
+- History view per node as a timeline: each state with when it began, when it ended, and how long it lasted, all in UTC
+- Outage log across all nodes for the last 8h / 12h / 24h / 7d: last good check, first failure, confirmation, restoration, duration; exportable as text for a turnover brief
+- Monitoring gaps: each engine run is recorded with a heartbeat, and spans with no engine running show as "Not monitored" rather than as uptime
+- One transaction per check, so the node's status and its history can never disagree; a failed write is logged and the transition recorded on the next check
+- A node's first check sets its status without recording a transition
 - Last status change time survives restarts
 
 ## TUI

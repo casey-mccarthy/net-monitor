@@ -341,6 +341,7 @@ fn test_status_change_creation() {
         to_status: NodeStatus::Offline,
         changed_at: now,
         duration_ms: Some(60000),
+        last_success_at: None,
     };
 
     assert_eq!(change.id, Some(1));
@@ -382,6 +383,7 @@ fn test_status_change_is_degradation_online_to_offline() {
         to_status: NodeStatus::Offline,
         changed_at: Utc::now(),
         duration_ms: None,
+        last_success_at: None,
     };
     assert!(change.is_degradation());
 }
@@ -395,6 +397,7 @@ fn test_status_change_is_degradation_offline_to_online() {
         to_status: NodeStatus::Online,
         changed_at: Utc::now(),
         duration_ms: None,
+        last_success_at: None,
     };
     assert!(!change.is_degradation());
 }
@@ -408,6 +411,7 @@ fn test_status_change_is_recovery_offline_to_online() {
         to_status: NodeStatus::Online,
         changed_at: Utc::now(),
         duration_ms: None,
+        last_success_at: None,
     };
     assert!(change.is_recovery());
 }
@@ -421,6 +425,7 @@ fn test_status_change_is_recovery_online_to_offline() {
         to_status: NodeStatus::Offline,
         changed_at: Utc::now(),
         duration_ms: None,
+        last_success_at: None,
     };
     assert!(!change.is_recovery());
 }
@@ -434,6 +439,7 @@ fn test_status_change_description() {
         to_status: NodeStatus::Offline,
         changed_at: Utc::now(),
         duration_ms: None,
+        last_success_at: None,
     };
     assert_eq!(change.description(), "Online → Offline");
 }
@@ -447,6 +453,7 @@ fn test_status_change_description_recovery() {
         to_status: NodeStatus::Online,
         changed_at: Utc::now(),
         duration_ms: None,
+        last_success_at: None,
     };
     assert_eq!(change.description(), "Offline → Online");
 }
@@ -460,6 +467,7 @@ fn test_status_change_clone() {
         to_status: NodeStatus::Offline,
         changed_at: Utc::now(),
         duration_ms: Some(5000),
+        last_success_at: None,
     };
     let cloned = original.clone();
     assert_eq!(cloned.id, original.id);
@@ -477,6 +485,7 @@ fn test_status_change_debug() {
         to_status: NodeStatus::Offline,
         changed_at: Utc::now(),
         duration_ms: Some(30000),
+        last_success_at: None,
     };
     let debug_str = format!("{:?}", change);
     assert!(debug_str.contains("StatusChange"));
@@ -492,6 +501,7 @@ fn test_status_change_serialization() {
         to_status: NodeStatus::Offline,
         changed_at: Utc::now(),
         duration_ms: Some(60000),
+        last_success_at: None,
     };
     let json = serde_json::to_string(&change).unwrap();
     let deserialized: StatusChange = serde_json::from_str(&json).unwrap();

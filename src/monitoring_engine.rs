@@ -10,9 +10,20 @@
 //! - **Offline** (hard state): Node has failed `max_check_attempts` consecutive checks.
 //!
 //! Recovery from either Degraded or Offline is immediate on the first successful check.
-//! Every transition between the three states is persisted as a `StatusChange`, along
-//! with the monitoring result that caused it; results for checks that leave the status
-//! unchanged are not stored.
+//! Every transition between the three states is persisted as a `StatusChange`, stamped
+//! with the time of the check that caused it and with the time of the last check that
+//! still succeeded, along with the monitoring result itself. Results for checks that
+//! leave the status unchanged are not stored. A node's first check ever sets its status
+//! without recording a transition: the status it was created with is a placeholder,
+//! not something it was observed in.
+//!
+//! The node's runtime state, the transition and the result are written in one
+//! transaction. If that write fails the engine keeps the previous state in memory
+//! and records the transition on the next check instead, so a transient database
+//! error delays a transition rather than losing it.
+//!
+//! Each run of the engine is recorded in `engine_runs` and kept alive with a
+//! heartbeat, so the history can show when nothing was being monitored at all.
 //!
 //! One background thread owns the loop and all per-node state. Checks themselves do
 //! not run on that thread: each due node is handed to a tokio task, so a slow or
@@ -28,10 +39,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tracing::info;
+use tracing::{error, info};
 
 /// How often the loop wakes up to launch due checks and apply finished ones.
 const TICK: Duration = Duration::from_millis(250);
+
+/// How often the engine records that it is still running. A crash loses at
+/// most this much of the monitored timeline to the following gap.
+const HEARTBEAT: Duration = Duration::from_secs(5);
 
 /// Commands sent to the monitoring thread to update its node configuration.
 #[derive(Clone)]
@@ -45,6 +60,18 @@ pub enum NodeConfigUpdate {
 pub struct MonitoringHandle {
     pub stop_tx: mpsc::Sender<()>,
     pub config_tx: mpsc::Sender<NodeConfigUpdate>,
+}
+
+/// What the engine remembers about a node between checks, beyond what is on
+/// the `Node` itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodeState {
+    /// The status the node was last known to be in.
+    pub status: NodeStatus,
+    /// When that status began, if a transition into it was ever recorded.
+    pub last_change_at: Option<DateTime<Utc>>,
+    /// When the node's most recent successful check ran.
+    pub last_success_at: Option<DateTime<Utc>>,
 }
 
 /// Starts the monitoring engine in a background thread.
@@ -85,17 +112,21 @@ fn run_monitoring_loop(
     // Seed per-node state from the database so a restart neither records
     // duplicate transitions nor loses track of how long the current state
     // has lasted.
-    let mut previous_statuses: HashMap<i64, NodeStatus> = HashMap::new();
-    let mut last_status_change_times: HashMap<i64, DateTime<Utc>> = HashMap::new();
+    let mut node_states: HashMap<i64, NodeState> = HashMap::new();
     for node in &initial_nodes {
         if let Some(node_id) = node.id {
-            let (status, last_change) = load_node_state(&db, node_id, node.status);
-            previous_statuses.insert(node_id, status);
-            if let Some(changed_at) = last_change {
-                last_status_change_times.insert(node_id, changed_at);
-            }
+            node_states.insert(node_id, load_node_state(&db, node));
         }
     }
+
+    let run_id = match db.start_engine_run(Utc::now()) {
+        Ok(id) => Some(id),
+        Err(e) => {
+            error!("Failed to record engine start: {}", e);
+            None
+        }
+    };
+    let mut last_heartbeat = Instant::now();
 
     let mut current_nodes = initial_nodes;
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -108,8 +139,7 @@ fn run_monitoring_loop(
             &db,
             &mut current_nodes,
             &mut last_check_times,
-            &mut previous_statuses,
-            &mut last_status_change_times,
+            &mut node_states,
         );
 
         // Apply every check that finished since the last tick.
@@ -120,14 +150,9 @@ fn run_monitoring_loop(
             let Some(node) = current_nodes.iter_mut().find(|n| n.id == Some(node_id)) else {
                 continue;
             };
-            apply_check_result(
-                &db,
-                node,
-                check_result,
-                &mut previous_statuses,
-                &mut last_status_change_times,
-            );
+            apply_check_result(&db, node, check_result, &mut node_states);
             if update_tx.send(node.clone()).is_err() {
+                heartbeat(&db, run_id);
                 runtime.shutdown_background();
                 return;
             }
@@ -151,98 +176,159 @@ fn run_monitoring_loop(
             });
         }
 
+        if last_heartbeat.elapsed() >= HEARTBEAT {
+            heartbeat(&db, run_id);
+            last_heartbeat = Instant::now();
+        }
+
         match stop_rx.recv_timeout(TICK) {
             Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
     }
 
+    heartbeat(&db, run_id);
     // Don't wait for in-flight checks (a ping can take count × timeout seconds).
     runtime.shutdown_background();
 }
 
+fn heartbeat(db: &Database, run_id: Option<i64>) {
+    if let Some(run_id) = run_id {
+        if let Err(e) = db.touch_engine_run(run_id, Utc::now()) {
+            error!("Failed to record engine heartbeat: {}", e);
+        }
+    }
+}
+
 /// Folds a finished check into the node: runs the soft/hard state machine,
-/// records the transition and its result when the status changed (or on the
-/// node's first check ever), and persists the node's runtime state.
-fn apply_check_result(
+/// records the transition and its result when the status changed, and
+/// persists the node's runtime state, all in one database transaction.
+///
+/// The transition is stamped with the check's own timestamp, not the time it
+/// was applied, and carries the time of the last successful check so the
+/// history can bound when the node really went down.
+pub fn apply_check_result(
     db: &Database,
     node: &mut Node,
     mut check_result: MonitoringResult,
-    previous_statuses: &mut HashMap<i64, NodeStatus>,
-    last_status_change_times: &mut HashMap<i64, DateTime<Utc>>,
+    node_states: &mut HashMap<i64, NodeState>,
 ) {
     let node_id = node.id.unwrap_or(0);
-    let previous_status = previous_statuses.get(&node_id).copied();
+    let previous = node_states.get(&node_id).copied();
     let check_succeeded = check_result.status == NodeStatus::Online;
+    let checked_at = check_result.timestamp;
+
+    // A node that has never been checked holds a placeholder status, not one
+    // it was observed in: its first check sets the status without a transition.
+    let first_check = node.last_check.is_none();
 
     let new_status = evaluate_node_status(node, check_succeeded);
     check_result.status = new_status;
     check_result.node_id = node_id;
 
-    let status_changed =
-        previous_status.is_some_and(|prev| should_record_status_change(prev, new_status));
+    let last_success_at = if check_succeeded {
+        Some(checked_at)
+    } else {
+        previous.and_then(|state| state.last_success_at)
+    };
 
-    if let (Some(prev_status), true) = (previous_status, status_changed) {
-        let current_time = Utc::now();
-        let duration_ms = last_status_change_times
-            .get(&node_id)
-            .map(|last_change| StatusChange::calculate_duration(*last_change, current_time));
-
-        let status_change = StatusChange {
+    let transition = match previous {
+        Some(state) if !first_check && state.status != new_status => Some(StatusChange {
             id: None,
             node_id,
-            from_status: prev_status,
+            from_status: state.status,
             to_status: new_status,
-            changed_at: current_time,
-            duration_ms,
-        };
+            changed_at: checked_at,
+            duration_ms: state
+                .last_change_at
+                .map(|began| StatusChange::calculate_duration(began, checked_at)),
+            last_success_at,
+        }),
+        _ => None,
+    };
 
-        let _ = db.add_status_change(&status_change);
-        last_status_change_times.insert(node_id, current_time);
-    }
-
-    previous_statuses.insert(node_id, new_status);
     node.status = new_status;
-    node.last_check = Some(check_result.timestamp);
+    node.last_check = Some(checked_at);
     node.response_time = check_result.response_time;
+
+    // Keep the result that caused a transition, and the first check ever.
+    let keep_result = transition.is_some() || first_check;
 
     // Persist only runtime state: the user may have edited this node's
     // configuration while the check was in flight, and writing our copy
     // back would clobber that edit in the database.
-    let _ = db.update_node_runtime_state(node);
-
-    // Record the monitoring result on confirmed status changes or the first check ever.
-    if status_changed || previous_status.is_none() {
-        let _ = db.add_monitoring_result(&check_result);
+    match db.record_check(
+        node,
+        transition.as_ref(),
+        keep_result.then_some(&check_result),
+    ) {
+        Ok(()) => {
+            node_states.insert(
+                node_id,
+                NodeState {
+                    status: new_status,
+                    last_change_at: transition
+                        .as_ref()
+                        .map(|change| change.changed_at)
+                        .or(previous.and_then(|state| state.last_change_at)),
+                    last_success_at,
+                },
+            );
+        }
+        Err(e) => {
+            error!(
+                "Failed to record check for node {} ({}); will retry on the next check: {}",
+                node_id, node.name, e
+            );
+            // Remember the success so the eventual transition still carries
+            // it, but keep the old status so the transition is attempted again.
+            match node_states.get_mut(&node_id) {
+                Some(state) => state.last_success_at = last_success_at,
+                None => {
+                    node_states.insert(
+                        node_id,
+                        NodeState {
+                            status: new_status,
+                            last_change_at: None,
+                            last_success_at,
+                        },
+                    );
+                }
+            }
+        }
     }
 }
 
-/// Loads the persisted state the engine needs for a node: the status it was
-/// last known to be in and when its most recent status change happened.
+/// Loads the persisted state the engine needs for a node.
 ///
-/// The status comes from the latest monitoring result when one exists,
-/// otherwise from the node record itself (`fallback_status`). The timestamp
-/// comes from the latest recorded status change, or `None` if there has
-/// never been one.
-fn load_node_state(
-    db: &Database,
-    node_id: i64,
-    fallback_status: NodeStatus,
-) -> (NodeStatus, Option<DateTime<Utc>>) {
-    let status = db
-        .get_latest_monitoring_result(node_id)
-        .ok()
-        .flatten()
-        .map(|result| result.status)
-        .unwrap_or(fallback_status);
+/// The status and the time it began come from the latest recorded status
+/// change; a node without one keeps the status on its record. The last
+/// successful check is the node's last check when it is Online (an Online
+/// node's last check succeeded by definition), otherwise whatever the latest
+/// change recorded.
+pub fn load_node_state(db: &Database, node: &Node) -> NodeState {
+    let latest_change = node
+        .id
+        .and_then(|node_id| db.get_latest_status_change(node_id).ok().flatten());
 
-    let last_change = db
-        .get_latest_status_change(node_id)
-        .ok()
-        .flatten()
-        .map(|change| change.changed_at);
+    let status = latest_change
+        .as_ref()
+        .map(|change| change.to_status)
+        .unwrap_or(node.status);
 
-    (status, last_change)
+    let last_success_at = if status == NodeStatus::Online {
+        node.last_check
+    } else {
+        latest_change
+            .as_ref()
+            .and_then(|change| change.last_success_at)
+    };
+
+    NodeState {
+        status,
+        last_change_at: latest_change.map(|change| change.changed_at),
+        last_success_at,
+    }
 }
 
 /// Determines if a node should be checked based on its interval and current state.
@@ -291,34 +377,20 @@ pub fn evaluate_node_status(node: &mut Node, check_succeeded: bool) -> NodeStatu
     }
 }
 
-/// Determines whether a status change should be recorded as an event.
-///
-/// We only record transitions between the three confirmed display states
-/// (Online, Degraded, Offline) when they actually change. Degraded→Degraded
-/// is not a transition.
-fn should_record_status_change(prev: NodeStatus, new: NodeStatus) -> bool {
-    prev != new
-}
-
 /// Process incoming configuration updates from the TUI.
 fn process_config_updates(
     config_rx: &mpsc::Receiver<NodeConfigUpdate>,
     db: &Database,
     current_nodes: &mut Vec<Node>,
     last_check_times: &mut HashMap<i64, Instant>,
-    previous_statuses: &mut HashMap<i64, NodeStatus>,
-    last_status_change_times: &mut HashMap<i64, DateTime<Utc>>,
+    node_states: &mut HashMap<i64, NodeState>,
 ) {
     while let Ok(config_update) = config_rx.try_recv() {
         match config_update {
             NodeConfigUpdate::Add(node) => {
                 if !current_nodes.iter().any(|n| n.id == node.id) {
                     if let Some(node_id) = node.id {
-                        let (status, last_change) = load_node_state(db, node_id, node.status);
-                        previous_statuses.insert(node_id, status);
-                        if let Some(changed_at) = last_change {
-                            last_status_change_times.insert(node_id, changed_at);
-                        }
+                        node_states.insert(node_id, load_node_state(db, &node));
                     }
                     current_nodes.push(node);
                 }
@@ -345,8 +417,7 @@ fn process_config_updates(
             NodeConfigUpdate::Delete(node_id) => {
                 current_nodes.retain(|n| n.id != Some(node_id));
                 last_check_times.remove(&node_id);
-                previous_statuses.remove(&node_id);
-                last_status_change_times.remove(&node_id);
+                node_states.remove(&node_id);
             }
         }
     }
@@ -363,22 +434,36 @@ mod tests {
         (dir, db)
     }
 
-    #[test]
-    fn test_load_node_state_without_history_uses_fallback() {
-        let (_dir, db) = temp_db();
-        let node_id = db.add_node(&make_node(NodeStatus::Offline, 0, 3)).unwrap();
-
-        let (status, last_change) = load_node_state(&db, node_id, NodeStatus::Degraded);
-        assert_eq!(status, NodeStatus::Degraded);
-        assert_eq!(last_change, None);
+    fn checked_node(status: NodeStatus, failures: u32, max_attempts: u32) -> Node {
+        let mut node = make_node(status, failures, max_attempts);
+        node.last_check = Some(Utc::now() - chrono::Duration::seconds(60));
+        node
     }
 
     #[test]
-    fn test_load_node_state_restores_status_and_change_time() {
+    fn test_load_node_state_without_history_uses_node_record() {
         let (_dir, db) = temp_db();
-        let node_id = db.add_node(&make_node(NodeStatus::Online, 0, 3)).unwrap();
+        let mut node = checked_node(NodeStatus::Online, 0, 3);
+        node.id = Some(db.add_node(&node).unwrap());
+
+        let state = load_node_state(&db, &node);
+        assert_eq!(state.status, NodeStatus::Online);
+        assert_eq!(state.last_change_at, None);
+        assert_eq!(
+            state.last_success_at, node.last_check,
+            "an Online node's last check was a success"
+        );
+    }
+
+    #[test]
+    fn test_load_node_state_restores_status_change_time_and_last_success() {
+        let (_dir, db) = temp_db();
+        let mut node = checked_node(NodeStatus::Online, 0, 3);
+        let node_id = db.add_node(&node).unwrap();
+        node.id = Some(node_id);
 
         let changed_at = Utc::now() - chrono::Duration::minutes(42);
+        let last_success_at = changed_at - chrono::Duration::minutes(1);
         db.add_status_change(&StatusChange {
             id: None,
             node_id,
@@ -386,24 +471,24 @@ mod tests {
             to_status: NodeStatus::Offline,
             changed_at,
             duration_ms: Some(1000),
-        })
-        .unwrap();
-        db.add_monitoring_result(&MonitoringResult {
-            id: None,
-            node_id,
-            timestamp: changed_at,
-            status: NodeStatus::Offline,
-            response_time: None,
-            details: None,
+            last_success_at: Some(last_success_at),
         })
         .unwrap();
 
-        let (status, last_change) = load_node_state(&db, node_id, NodeStatus::Online);
-        assert_eq!(status, NodeStatus::Offline);
+        let state = load_node_state(&db, &node);
+        assert_eq!(
+            state.status,
+            NodeStatus::Offline,
+            "the history wins over the node record"
+        );
         // Compare at millisecond precision: RFC 3339 storage may drop sub-ms digits
         assert_eq!(
-            last_change.map(|t| t.timestamp_millis()),
+            state.last_change_at.map(|t| t.timestamp_millis()),
             Some(changed_at.timestamp_millis())
+        );
+        assert_eq!(
+            state.last_success_at.map(|t| t.timestamp_millis()),
+            Some(last_success_at.timestamp_millis())
         );
     }
 
@@ -418,32 +503,42 @@ mod tests {
         }
     }
 
+    fn state(
+        status: NodeStatus,
+        last_change_at: Option<DateTime<Utc>>,
+        last_success_at: Option<DateTime<Utc>>,
+    ) -> NodeState {
+        NodeState {
+            status,
+            last_change_at,
+            last_success_at,
+        }
+    }
+
     // -- apply_check_result tests --
 
     #[test]
     fn test_apply_first_check_records_result_but_no_transition() {
         let (_dir, db) = temp_db();
-        let mut node = make_node(NodeStatus::Online, 0, 3);
+        // A new node is created Offline as a placeholder and has never been checked.
+        let mut node = make_node(NodeStatus::Offline, 0, 3);
         let node_id = db.add_node(&node).unwrap();
         node.id = Some(node_id);
-        let mut previous_statuses = HashMap::new();
-        let mut last_changes = HashMap::new();
+        let mut states = HashMap::from([(node_id, load_node_state(&db, &node))]);
 
-        apply_check_result(
-            &db,
-            &mut node,
-            make_result(NodeStatus::Online),
-            &mut previous_statuses,
-            &mut last_changes,
-        );
+        apply_check_result(&db, &mut node, make_result(NodeStatus::Online), &mut states);
 
         assert_eq!(node.status, NodeStatus::Online);
         assert_eq!(node.response_time, Some(12));
         assert!(node.last_check.is_some());
-        assert_eq!(previous_statuses.get(&node_id), Some(&NodeStatus::Online));
+        assert_eq!(states[&node_id].status, NodeStatus::Online);
+        assert_eq!(states[&node_id].last_success_at, node.last_check);
         let stored = db.get_latest_monitoring_result(node_id).unwrap().unwrap();
         assert_eq!(stored.node_id, node_id);
-        assert!(db.get_latest_status_change(node_id).unwrap().is_none());
+        assert!(
+            db.get_latest_status_change(node_id).unwrap().is_none(),
+            "the placeholder status is not a state the node was observed in"
+        );
         assert_eq!(
             db.get_all_nodes().unwrap()[0].status,
             NodeStatus::Online,
@@ -452,22 +547,24 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_transition_records_change_with_duration() {
+    fn test_apply_transition_is_stamped_with_the_check_time_and_last_success() {
         let (_dir, db) = temp_db();
-        let mut node = make_node(NodeStatus::Online, 0, 3);
+        let mut node = checked_node(NodeStatus::Online, 0, 3);
         let node_id = db.add_node(&node).unwrap();
         node.id = Some(node_id);
-        let mut previous_statuses = HashMap::from([(node_id, NodeStatus::Online)]);
-        let mut last_changes =
-            HashMap::from([(node_id, Utc::now() - chrono::Duration::seconds(30))]);
+        let began = Utc::now() - chrono::Duration::seconds(30);
+        let last_success = node.last_check;
+        let mut states = HashMap::from([(
+            node_id,
+            state(NodeStatus::Online, Some(began), last_success),
+        )]);
 
-        apply_check_result(
-            &db,
-            &mut node,
-            make_result(NodeStatus::Offline),
-            &mut previous_statuses,
-            &mut last_changes,
-        );
+        let mut result = make_result(NodeStatus::Offline);
+        // The check finished a while before the engine got to apply it.
+        result.timestamp = Utc::now() - chrono::Duration::seconds(10);
+        let checked_at = result.timestamp;
+
+        apply_check_result(&db, &mut node, result, &mut states);
 
         assert_eq!(node.status, NodeStatus::Degraded);
         assert_eq!(node.consecutive_failures, 1);
@@ -475,7 +572,20 @@ mod tests {
         let change = db.get_latest_status_change(node_id).unwrap().unwrap();
         assert_eq!(change.from_status, NodeStatus::Online);
         assert_eq!(change.to_status, NodeStatus::Degraded);
-        assert!(change.duration_ms.unwrap() >= 29_000);
+        assert_eq!(
+            change.changed_at.timestamp_millis(),
+            checked_at.timestamp_millis(),
+            "the transition happened when the check did, not when it was applied"
+        );
+        assert_eq!(
+            change.duration_ms,
+            Some((checked_at - began).num_milliseconds())
+        );
+        assert_eq!(
+            change.last_success_at.map(|t| t.timestamp_millis()),
+            last_success.map(|t| t.timestamp_millis()),
+            "the transition out of Online carries the last good check"
+        );
         assert_eq!(
             db.get_latest_monitoring_result(node_id)
                 .unwrap()
@@ -484,29 +594,87 @@ mod tests {
             NodeStatus::Degraded,
             "the stored result carries the evaluated status, not the raw check"
         );
-        assert!(last_changes[&node_id] > Utc::now() - chrono::Duration::seconds(5));
+        assert_eq!(states[&node_id].status, NodeStatus::Degraded);
+        assert_eq!(states[&node_id].last_change_at, Some(checked_at));
+        assert_eq!(states[&node_id].last_success_at, last_success);
+    }
+
+    #[test]
+    fn test_apply_recovery_carries_the_recovering_check_as_last_success() {
+        let (_dir, db) = temp_db();
+        let mut node = checked_node(NodeStatus::Offline, 3, 3);
+        let node_id = db.add_node(&node).unwrap();
+        node.id = Some(node_id);
+        let old_success = Some(Utc::now() - chrono::Duration::hours(1));
+        let mut states = HashMap::from([(node_id, state(NodeStatus::Offline, None, old_success))]);
+
+        let result = make_result(NodeStatus::Online);
+        let checked_at = result.timestamp;
+        apply_check_result(&db, &mut node, result, &mut states);
+
+        let change = db.get_latest_status_change(node_id).unwrap().unwrap();
+        assert_eq!(change.to_status, NodeStatus::Online);
+        assert_eq!(
+            change.last_success_at.map(|t| t.timestamp_millis()),
+            Some(checked_at.timestamp_millis())
+        );
+        assert_eq!(states[&node_id].last_success_at, Some(checked_at));
     }
 
     #[test]
     fn test_apply_unchanged_status_stores_nothing() {
         let (_dir, db) = temp_db();
-        let mut node = make_node(NodeStatus::Online, 0, 3);
+        let mut node = checked_node(NodeStatus::Online, 0, 3);
         let node_id = db.add_node(&node).unwrap();
         node.id = Some(node_id);
-        let mut previous_statuses = HashMap::from([(node_id, NodeStatus::Online)]);
-        let mut last_changes = HashMap::new();
+        let mut states = HashMap::from([(node_id, state(NodeStatus::Online, None, None))]);
 
-        apply_check_result(
-            &db,
-            &mut node,
-            make_result(NodeStatus::Online),
-            &mut previous_statuses,
-            &mut last_changes,
-        );
+        apply_check_result(&db, &mut node, make_result(NodeStatus::Online), &mut states);
 
         assert!(db.get_latest_monitoring_result(node_id).unwrap().is_none());
         assert!(db.get_latest_status_change(node_id).unwrap().is_none());
         assert!(node.last_check.is_some(), "runtime state still updates");
+        assert_eq!(
+            states[&node_id].last_success_at, node.last_check,
+            "every successful check moves the last success forward"
+        );
+    }
+
+    #[test]
+    fn test_apply_keeps_old_state_when_the_write_fails() {
+        let (dir, db) = temp_db();
+        let mut node = checked_node(NodeStatus::Online, 0, 3);
+        let node_id = db.add_node(&node).unwrap();
+        node.id = Some(node_id);
+        let began = Utc::now() - chrono::Duration::seconds(30);
+        let mut states = HashMap::from([(
+            node_id,
+            state(NodeStatus::Online, Some(began), node.last_check),
+        )]);
+
+        // Make the database unwritable: the handle only holds the path, so a
+        // directory in place of the file makes every connection fail.
+        std::fs::remove_file(dir.path().join("engine.db")).unwrap();
+        std::fs::create_dir(dir.path().join("engine.db")).unwrap();
+
+        apply_check_result(
+            &db,
+            &mut node,
+            make_result(NodeStatus::Offline),
+            &mut states,
+        );
+
+        assert_eq!(
+            node.status,
+            NodeStatus::Degraded,
+            "the screen still shows the new status"
+        );
+        assert_eq!(
+            states[&node_id].status,
+            NodeStatus::Online,
+            "the transition is still owed and will be recorded by the next check"
+        );
+        assert_eq!(states[&node_id].last_change_at, Some(began));
     }
 
     // -- end-to-end: checks run concurrently --
@@ -717,44 +885,6 @@ mod tests {
         // Checked 61 seconds ago - should check
         last_check_times.insert(1, Instant::now() - Duration::from_secs(61));
         assert!(should_check_node(&node, 1, &last_check_times));
-    }
-
-    // -- should_record_status_change tests --
-
-    #[test]
-    fn test_same_status_no_record() {
-        assert!(!should_record_status_change(
-            NodeStatus::Online,
-            NodeStatus::Online
-        ));
-        assert!(!should_record_status_change(
-            NodeStatus::Offline,
-            NodeStatus::Offline
-        ));
-        assert!(!should_record_status_change(
-            NodeStatus::Degraded,
-            NodeStatus::Degraded
-        ));
-    }
-
-    #[test]
-    fn test_different_status_records() {
-        assert!(should_record_status_change(
-            NodeStatus::Online,
-            NodeStatus::Degraded
-        ));
-        assert!(should_record_status_change(
-            NodeStatus::Degraded,
-            NodeStatus::Offline
-        ));
-        assert!(should_record_status_change(
-            NodeStatus::Offline,
-            NodeStatus::Online
-        ));
-        assert!(should_record_status_change(
-            NodeStatus::Degraded,
-            NodeStatus::Online
-        ));
     }
 
     // -- Full state machine walkthrough --

@@ -9,7 +9,8 @@ A terminal-based network monitor written in Rust. It watches HTTP endpoints, TCP
 - **Ping** — ICMP echo with a configurable count and timeout. Accepts hostnames as well as IP addresses, and works without root on Linux and macOS.
 - **Soft/hard state model** — one failed check marks a node *Degraded*; only consecutive failures mark it *Offline*. Fewer false alarms.
 - **Concurrent checks** — every node is checked on its own schedule, in parallel. A host that times out never delays the others.
-- **Status history** — every status transition is stored with how long the previous state lasted, so the history view shows uptime and outage lengths.
+- **Status history** — every status transition is stored, so the history view shows a node's timeline: each state, when it began, when it ended, and how long it lasted.
+- **Outage log** — every confirmed outage across all nodes in the last 8h, 12h, 24h, or 7d, with the last good check, when it went down, when it was restored, and the duration. Exportable as a text file for a turnover brief.
 - **Connect** — press Enter on a node to open it: HTTP nodes open in your browser, ping and TCP nodes open an SSH session in a new terminal window.
 - **Import/Export** — node configuration as JSON.
 - **Cross-platform** — Linux, macOS, and Windows.
@@ -63,6 +64,7 @@ Monitoring starts as soon as the app launches. Press `?` in any view for context
 | `e` | Edit the selected node |
 | `d` | Delete the selected node (asks for confirmation) |
 | `h` | Status history for the selected node |
+| `o` | Outage log for all nodes: `1`–`4` pick the window, `x` exports it as text |
 | `r` | Reorder nodes: `↑` / `↓` to move, `r` to save, `Esc` to cancel |
 | `i` | Import nodes from a JSON file |
 | `x` | Export nodes to a JSON file |
@@ -92,7 +94,15 @@ A URL without a scheme is treated as `https://`.
 | Degraded | A check failed, but not enough in a row to call the node down (soft state). It is rechecked every `retry_interval` seconds, 15 by default. |
 | Offline | `max_check_attempts` consecutive checks failed, 3 by default (hard state). |
 
-One successful check returns a node to Online from either state. Every transition between these states is recorded in the status history.
+One successful check returns a node to Online from either state. Every transition between these states is recorded in the status history, stamped with the time of the check that caused it and the time of the last check that still succeeded. A node's first check ever sets its status without recording a transition.
+
+### History and outages
+
+All history timestamps are UTC with an explicit `Z`.
+
+The status history (`h`) shows the node's timeline newest first: each state, when it began, when it ended, and how long it lasted. Spans when Net Monitor was not running are shown as **Not monitored** rather than counted as whatever state came before; the engine records each run and a heartbeat every few seconds, so a crash costs at most a few seconds of the timeline.
+
+The outage log (`o`) lists every confirmed outage across all nodes that touched the chosen window. An outage starts at the first failed check (**Down**), is confirmed when the node reaches Offline, and ends at the first successful check (**Restored**). The node was still answering at **Last up**, so it really went down somewhere between that and **Down**: the gap is at most the monitoring interval plus the check timeout. A Degraded blip that recovers before confirmation is not an outage. `x` writes the log, with any monitoring gaps in the window, to a text file.
 
 ### Import/Export
 
