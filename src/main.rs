@@ -15,6 +15,14 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 /// Main entry point for the network monitor application
 fn main() -> Result<()> {
+    if std::env::args()
+        .skip(1)
+        .any(|a| a == "--version" || a == "-V")
+    {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     // Setup logging - guard must be kept alive for the lifetime of the application
     let _guard = if let Some(proj_dirs) = project_dirs() {
         let log_dir = proj_dirs.data_dir();

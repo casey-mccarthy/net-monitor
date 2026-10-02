@@ -53,6 +53,14 @@ net-monitor
 
 Monitoring starts as soon as the app launches. Press `?` in any view for context-sensitive help.
 
+The running version is shown in the top-right corner of the title bar and in the About view (`b`). To check it without starting the TUI:
+
+```bash
+net-monitor --version
+```
+
+On Windows the version and description are also embedded in the executable, so they show up in Explorer under Properties → Details.
+
 ### Keys
 
 | Key | Action |
