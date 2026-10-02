@@ -32,6 +32,9 @@ Net Monitor is a single binary with four parts. The TUI owns the screen, the mon
 
 ## Components
 
+### `main.rs` and `build.rs`
+`main.rs` answers `--version` / `-V` before touching logging or the database, then sets up both and runs the TUI. `build.rs` runs only when the target OS is Windows: it uses `winresource` to embed a VERSIONINFO resource (version, description, product name from `Cargo.toml`) so the `.exe` shows them in its file properties. Everywhere else it is a no-op. The version string itself comes from `CARGO_PKG_VERSION`, which the release workflow bumps.
+
 ### `tui.rs`
 Renders every view with ratatui and handles all input. Owns the in-memory list of nodes and the `TableState`. Talks to the engine through a `MonitoringHandle` (start, stop, send config updates) and receives status updates over a channel. Import/export, node forms, reorder mode, history, the outage log, and the about/help overlays all live here. The history and outage views load raw rows from the database and hand them to `history.rs`; they do no date arithmetic of their own. The terminal is restored on panic and around native file dialogs.
 

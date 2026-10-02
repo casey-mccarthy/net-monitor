@@ -40,3 +40,6 @@ network-tests = []
 tempfile = "3.0"
 lazy_static = "1.4"
 futures = "0.3"
+
+[build-dependencies]
+winresource = "0.1"
