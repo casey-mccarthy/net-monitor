@@ -616,21 +616,15 @@ impl NetworkMonitorTui {
             ])
             .split(f.area());
 
-        // Title, with the version tucked into the top-right corner of the border
-        let title = Paragraph::new("Network Monitor")
+        // Title
+        let title = Paragraph::new(concat!("Network Monitor v", env!("CARGO_PKG_VERSION")))
             .style(
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )
             .alignment(Alignment::Center)
-            .block(
-                Block::default().borders(Borders::ALL).title_top(
-                    Line::from(format!(" v{} ", env!("CARGO_PKG_VERSION")))
-                        .style(Style::default().fg(Color::DarkGray))
-                        .right_aligned(),
-                ),
-            );
+            .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
         // Menu bar
